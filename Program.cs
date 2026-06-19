@@ -7,15 +7,26 @@ namespace TestProject {
 
             builder.Services.AddControllers();
 
+            // Bind the FileService configuration section and register the
+            // path-safe IFileService implementation so controllers can be
+            // activated through dependency injection.
+            builder.Services.Configure<TestProject.FileServiceOptions>(
+                builder.Configuration.GetSection("FileService"));
+            builder.Services.AddSingleton<TestProject.Services.IFileService, TestProject.Services.FileService>();
+
             var app = builder.Build();
 
             // Configure the HTTP request pipeline.
 
             app.UseHttpsRedirection();
 
+            app.UseDefaultFiles();
+
             app.UseStaticFiles();
 
             app.MapControllers();
+
+            app.MapFallbackToFile("index.html");
 
             app.Run();
         }

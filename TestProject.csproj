@@ -1,13 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <!-- Exclude the nested xUnit test project so the web app build does not compile test sources. -->
   <ItemGroup>
-    <None Include="wwwroot\index.html" />
+    <Compile Remove="TestProject.Tests/**" />
+    <None Remove="TestProject.Tests/**" />
   </ItemGroup>
 
 </Project>
