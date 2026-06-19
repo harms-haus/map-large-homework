@@ -1,0 +1,176 @@
+## -------------------- ##
+## .NET / Visual Studio ##
+## -------------------- ##
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio cache/options
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# Visual Studio auto-generated files
+*_i.c
+*_p.c
+*_h.h
+*.ilk
+*.meta
+*.obj
+*.iobj
+*.pch
+*.pdb
+*.ipdb
+*.pgc
+*.pgd
+*.rsp
+*.sbr
+*.tlb
+*.tli
+*.tlh
+*.tmp
+*.tmp_proj
+*_wpftmp.csproj
+*.log
+*.tlog
+
+# Build outputs / publish
+*.dll
+*.exe
+*.cache
+*.so
+*.dylib
+appsettings.*.local.json
+
+# NuGet
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+project.lock.json
+
+# Test results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+TestResult.xml
+
+# .NET Core / SDK
+*.swp
+*~
+project.fragment.lock.json
+artifacts/
+
+# User secrets (keep the file structure out of source)
+secrets.json
+appsettings.Development.local.json
+
+## ---------------------------------------- ##
+## Node.js / TypeScript / HTML / CSS / build ##
+## ---------------------------------------- ##
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build / compile output
+dist/
+build/
+out/
+wwwroot/dist/
+wwwroot/lib/
+*.tsbuildinfo
+
+# TypeScript
+# (compiled .js emitted alongside .ts are usually ignored in wwwroot if using a build step;
+# uncomment the next lines if you emit JS next to TS sources and want to ignore them)
+# wwwroot/**/*.js
+# wwwroot/**/*.js.map
+
+# Source maps (keep or ignore depending on preference)
+*.js.map
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Package manager lock files (uncomment to ignore; usually you WANT to commit these)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# Coverage / test output
+coverage/
+*.lcov
+.nyc_output/
+
+# Cache directories
+.npm/
+.eslintcache
+.cache/
+.parcel-cache/
+.stylelintcache
+.turbo/
+
+## ----------------------------- ##
+## Editors / IDEs               ##
+## ----------------------------- ##
+
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# JetBrains (Rider, WebStorm, IntelliJ)
+.idea/
+*.sln.iml
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+## ----------------------------- ##
+## Operating systems            ##
+## ----------------------------- ##
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
