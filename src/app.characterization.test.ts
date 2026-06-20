@@ -216,10 +216,24 @@ afterEach(() => {
  * change the DOM the tests in app.test.ts rely on (tbody-traversal helpers).
  * ========================================================================= */
 describe('buildTable (table structure)', () => {
-  it('gives the table the class "results-table"', async () => {
+  it('tags the browse table with both results-table and browse-table classes', async () => {
     const { results } = await setupCleared();
     renderBrowse(browseResult({ path: 'docs', entries: [] }));
-    expect(results.querySelector('table')!.className).toBe('results-table');
+    const t = results.querySelector('table')!;
+    expect(t.classList.contains('results-table')).toBe(true);
+    expect(t.classList.contains('browse-table')).toBe(true);
+  });
+
+  it('does NOT tag the search table with browse-table (only results-table)', async () => {
+    const { results } = await setupCleared();
+    renderSearch({
+      query: 'q',
+      path: '',
+      results: [fileEntry({ name: 'a.txt', path: 'docs/a.txt' })],
+    });
+    const t = results.querySelector('table')!;
+    expect(t.classList.contains('results-table')).toBe(true);
+    expect(t.classList.contains('browse-table')).toBe(false);
   });
 
   it('builds a <thead> with exactly one <tr> holding one <th> per header', async () => {
@@ -229,7 +243,7 @@ describe('buildTable (table structure)', () => {
     const theadRows = table.querySelectorAll('thead tr');
     expect(theadRows).toHaveLength(1);
     const headers = Array.from(theadRows[0].querySelectorAll('th')).map((h) => h.textContent!);
-    expect(headers).toEqual(['Name', 'Size', 'Modified', 'Actions']);
+    expect(headers).toEqual(['Name', 'Size', 'Modified', '']);
   });
 
   it('always creates a <tbody>, even when there are no data rows', async () => {

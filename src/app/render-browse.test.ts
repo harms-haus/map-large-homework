@@ -21,7 +21,7 @@
  *    (module-level element refs), so every test calls `setup()`/`setupCleared()`
  *    first.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderBrowse } from '../app';
 import { toBrowseHash } from '../router';
 import { formatBytes, normalizeRelativePath } from '../format';
@@ -48,14 +48,48 @@ installAppTestLifecycle();
  * renderBrowse — table, rows, columns, navigation, actions
  * ========================================================================= */
 describe('renderBrowse', () => {
-  it('builds a table with header Name | Size | Modified | Actions', async () => {
+  it('builds a table with header Name | Size | Modified | (blank Actions header)', async () => {
     const { results } = await setupCleared();
     renderBrowse(browseResult({ path: 'docs', entries: [] }));
 
     const table = results.querySelector('table');
     expect(table).toBeTruthy();
     const headers = Array.from(table!.querySelectorAll('th')).map((h) => h.textContent!.trim());
-    expect(headers).toEqual(['Name', 'Size', 'Modified', 'Actions']);
+    // The Actions column has no visible header label now: the 4th <th> is
+    // empty, but all four <th> remain so the header column count lines up
+    // with the four <td> per body row (uniform :nth-child targeting).
+    expect(headers).toEqual(['Name', 'Size', 'Modified', '']);
+  });
+
+  it('tags the browse table with the browse-table class alongside results-table', async () => {
+    const { results } = await setupCleared();
+    renderBrowse(browseResult({ path: 'docs', entries: [] }));
+
+    const table = results.querySelector('table')!;
+    expect(table.classList.contains('results-table')).toBe(true);
+    expect(table.classList.contains('browse-table')).toBe(true);
+  });
+
+  it('keeps the Actions column header th empty but present (four header cells)', async () => {
+    const { results } = await setupCleared();
+    renderBrowse(browseResult({ path: 'docs', entries: [] }));
+
+    const headers = Array.from(results.querySelector('table')!.querySelectorAll('thead th'));
+    expect(headers).toHaveLength(4);
+    expect(headers[3].textContent).toBe('');
+  });
+
+  it('keeps four td per body row so column counts line up with the header', async () => {
+    const entries = [
+      fileEntry({ name: 'a.txt', isDirectory: false, size: 10 }),
+      fileEntry({ name: 'sub', isDirectory: true }),
+    ];
+    const { results } = await setupCleared();
+    renderBrowse(browseResult({ path: 'docs', entries }));
+
+    for (const row of dataRows(results.querySelector('table')!)) {
+      expect(cellsOf(row)).toHaveLength(4);
+    }
   });
 
   it('renders one data row per entry when there is no parent', async () => {
@@ -500,6 +534,337 @@ describe('renderBrowse', () => {
       expect(text).toContain('2 folders');
       expect(text).toContain('3 files');
       expect(text).toContain(formatBytes(1536)); // "1.5 KB"
+    });
+  });
+
+  /* =====================================================================
+   * Row action menu — "⋮" dropdown button + right-click context menu
+   *
+   * The inline Download/Delete/Move/Copy controls are replaced by a single
+   * `.row-menu-btn` (the "⋮" three-dots button) that opens a `.row-menu`
+   * dropdown, and the SAME menu also opens on a right-click (`contextmenu`)
+   * anywhere on the data row, positioned at the cursor. The ".." parent row
+   * is navigation-only: no button, no menu, no contextmenu handler.
+   *
+   * These tests pin the new structure + open/close/positioning contract. The
+   * EXISTING Actions-column behavior tests (Download/Delete/Move/Copy + error
+   * surfacing) are left untouched and keep passing because clicking a button
+   * inside a `hidden` menu still dispatches in happy-dom.
+   * ===================================================================== */
+  describe('row action menu (⋮ dropdown + right-click context menu)', () => {
+    const file = fileEntry({ name: 'a.txt', path: 'docs/a.txt', isDirectory: false, size: 10 });
+    const dir = fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true });
+
+    function actionsOf(results: HTMLElement, name: string): Element {
+      const row = rowByName(results.querySelector('table')!, name)!;
+      return cellsOf(row)[3];
+    }
+    function menuBtnOf(actions: Element): HTMLButtonElement {
+      return actions.querySelector('.row-menu-btn') as HTMLButtonElement;
+    }
+    function menuOf(actions: Element): HTMLElement {
+      return actions.querySelector('.row-menu') as HTMLElement;
+    }
+
+    // Ensure no row menu is left open by a prior test. An Escape keydown closes
+    // any open menu and removes its document listeners — idempotent no-op when
+    // none is open — giving every test below a clean slate.
+    beforeEach(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+
+    describe('structure', () => {
+      it('a data row actions cell contains exactly one .row-menu-btn and one .row-menu', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file, dir] }));
+
+        for (const name of ['a.txt', 'sub']) {
+          const actions = actionsOf(results, name);
+          expect(actions.querySelectorAll('.row-menu-btn')).toHaveLength(1);
+          expect(actions.querySelectorAll('.row-menu')).toHaveLength(1);
+        }
+      });
+
+      it('the .row-menu-btn is a button[type=button] with aria-label="Actions", aria-haspopup="true", and textContent ⋮', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+
+        const btn = menuBtnOf(actionsOf(results, 'a.txt'));
+        expect(btn.tagName).toBe('BUTTON');
+        expect(btn.className).toBe('row-menu-btn');
+        expect(btn.getAttribute('type')).toBe('button');
+        expect(btn.getAttribute('aria-label')).toBe('Actions');
+        expect(btn.getAttribute('aria-haspopup')).toBe('true');
+        // U+22EE VERTICAL ELLIPSIS — three vertical dots.
+        expect(btn.textContent?.trim()).toBe('⋮');
+        expect(btn.textContent?.trim()).toBe('\u22EE');
+      });
+
+      it('the .row-menu is hidden initially and its button has aria-expanded="false"', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+
+        const actions = actionsOf(results, 'a.txt');
+        const menu = menuOf(actions);
+        const btn = menuBtnOf(actions);
+        expect(menu.className).toBe('row-menu');
+        expect(menu.hidden).toBe(true);
+        expect(btn.getAttribute('aria-expanded')).toBe('false');
+      });
+
+      it('the actions cell direct children are exactly [button.row-menu-btn, div.row-menu]', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+
+        const actions = actionsOf(results, 'a.txt');
+        const kids = Array.from(actions.children);
+        expect(kids).toHaveLength(2);
+        expect(kids[0]).toBe(menuBtnOf(actions));
+        expect((kids[1] as HTMLElement).className).toBe('row-menu');
+      });
+    });
+
+    describe('menu contents', () => {
+      it('file menu: Download(a) + Delete/Move/Copy(buttons) in that order, all inside .row-menu', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+
+        const menu = menuOf(actionsOf(results, 'a.txt'));
+        const items = Array.from(menu.children);
+        expect(items).toHaveLength(4);
+        expect(items[0].tagName).toBe('A');
+        expect((items[0].textContent ?? '').trim()).toBe('Download');
+        expect((items[0] as HTMLElement).className).toBe('btn');
+        expect(items[1].tagName).toBe('BUTTON');
+        expect((items[1].textContent ?? '').trim()).toBe('Delete');
+        expect(items[2].tagName).toBe('BUTTON');
+        expect((items[2].textContent ?? '').trim()).toBe('Move');
+        expect(items[3].tagName).toBe('BUTTON');
+        expect((items[3].textContent ?? '').trim()).toBe('Copy');
+      });
+
+      it('folder menu: Delete/Move/Copy only (NO Download anchor), inside .row-menu', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [dir] }));
+
+        const menu = menuOf(actionsOf(results, 'sub'));
+        expect(menu.querySelector('a')).toBeNull();
+        const items = Array.from(menu.children);
+        expect(items).toHaveLength(3);
+        expect((items[0].textContent ?? '').trim()).toBe('Delete');
+        expect((items[1].textContent ?? '').trim()).toBe('Move');
+        expect((items[2].textContent ?? '').trim()).toBe('Copy');
+      });
+
+      it('the ⋮ button is not matched by buttonsByText(Delete|Move|Copy) and is not an <a>', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file, dir] }));
+
+        for (const name of ['a.txt', 'sub']) {
+          const actions = actionsOf(results, name);
+          // Exactly one of each — the ⋮ button (text '⋮') does not collide.
+          expect(buttonsByText(actions, 'Delete')).toHaveLength(1);
+          expect(buttonsByText(actions, 'Move')).toHaveLength(1);
+          expect(buttonsByText(actions, 'Copy')).toHaveLength(1);
+          // The ⋮ control is a <button>, never an <a> (so the 'folders have no
+          // <a>' characterization still holds for folder rows).
+          expect(menuBtnOf(actions).tagName).toBe('BUTTON');
+        }
+      });
+
+      it('each data row still has exactly 4 td (column count unchanged)', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file, dir] }));
+
+        for (const row of dataRows(results.querySelector('table')!)) {
+          expect(cellsOf(row)).toHaveLength(4);
+        }
+      });
+    });
+
+    describe('open/close via the ⋮ button', () => {
+      it('clicking the ⋮ button opens the menu (not hidden, aria-expanded="true") and positions it', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+
+        const actions = actionsOf(results, 'a.txt');
+        const btn = menuBtnOf(actions);
+        const menu = menuOf(actions);
+
+        btn.click();
+
+        expect(menu.hidden).toBe(false);
+        expect(btn.getAttribute('aria-expanded')).toBe('true');
+        // Positioned at pixel coordinates (from getBoundingClientRect).
+        expect(menu.style.left).toMatch(/^-?\d+px$/);
+        expect(menu.style.top).toMatch(/^-?\d+px$/);
+      });
+
+      it('clicking the ⋮ button again closes the menu', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+
+        const actions = actionsOf(results, 'a.txt');
+        const btn = menuBtnOf(actions);
+        const menu = menuOf(actions);
+
+        btn.click();
+        expect(menu.hidden).toBe(false);
+
+        btn.click();
+        expect(menu.hidden).toBe(true);
+        expect(btn.getAttribute('aria-expanded')).toBe('false');
+      });
+
+      it('a click anywhere outside the menu closes an open menu', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+
+        const actions = actionsOf(results, 'a.txt');
+        const btn = menuBtnOf(actions);
+        const menu = menuOf(actions);
+
+        btn.click();
+        expect(menu.hidden).toBe(false);
+
+        // A click on an unrelated element bubbles up to document and closes.
+        const outside = document.createElement('div');
+        document.body.append(outside);
+        outside.click();
+        outside.remove();
+
+        expect(menu.hidden).toBe(true);
+        expect(btn.getAttribute('aria-expanded')).toBe('false');
+      });
+
+      it('pressing Escape closes an open menu', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+
+        const actions = actionsOf(results, 'a.txt');
+        const btn = menuBtnOf(actions);
+        const menu = menuOf(actions);
+
+        btn.click();
+        expect(menu.hidden).toBe(false);
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+        expect(menu.hidden).toBe(true);
+        expect(btn.getAttribute('aria-expanded')).toBe('false');
+      });
+
+      it('clicking a menu item bubbles to document and closes the open menu', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+        // Cancel the confirm so no delete / re-render happens — isolates the
+        // close behavior to the click-bubbles-to-document path.
+        vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+        const actions = actionsOf(results, 'a.txt');
+        menuBtnOf(actions).click();
+        const menu = menuOf(actions);
+        expect(menu.hidden).toBe(false);
+
+        buttonsByText(actions, 'Delete')[0].click();
+
+        expect(menu.hidden).toBe(true);
+      });
+    });
+
+    describe('right-click context menu', () => {
+      it('contextmenu on a data row prevents default and opens the menu at clientX/clientY', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+
+        const row = rowByName(results.querySelector('table')!, 'a.txt')!;
+        const actions = actionsOf(results, 'a.txt');
+        const menu = menuOf(actions);
+        const btn = menuBtnOf(actions);
+
+        const evt = new MouseEvent('contextmenu', {
+          cancelable: true,
+          bubbles: true,
+          clientX: 137,
+          clientY: 242,
+        });
+        row.dispatchEvent(evt);
+
+        expect(evt.defaultPrevented).toBe(true);
+        expect(menu.hidden).toBe(false);
+        expect(btn.getAttribute('aria-expanded')).toBe('true');
+        expect(menu.style.left).toBe('137px');
+        expect(menu.style.top).toBe('242px');
+      });
+
+      it('contextmenu opens the SAME menu element that lives in the row actions cell', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+
+        const row = rowByName(results.querySelector('table')!, 'a.txt')!;
+        const menuInCell = menuOf(actionsOf(results, 'a.txt'));
+
+        row.dispatchEvent(
+          new MouseEvent('contextmenu', {
+            cancelable: true,
+            bubbles: true,
+            clientX: 1,
+            clientY: 2,
+          }),
+        );
+
+        // No second menu was created — the now-visible menu IS the cell's menu.
+        expect(results.querySelectorAll('.row-menu')).toHaveLength(1);
+        expect(menuInCell.hidden).toBe(false);
+        expect(document.querySelector('.row-menu')).toBe(menuInCell);
+      });
+
+      it('opening a second row menu closes the first (only one open at a time)', async () => {
+        const entries = [
+          fileEntry({ name: 'a.txt', path: 'docs/a.txt', isDirectory: false, size: 10 }),
+          fileEntry({ name: 'b.txt', path: 'docs/b.txt', isDirectory: false, size: 20 }),
+        ];
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries }));
+
+        const rowB = rowByName(results.querySelector('table')!, 'b.txt')!;
+        const menuA = menuOf(actionsOf(results, 'a.txt'));
+        const menuB = menuOf(actionsOf(results, 'b.txt'));
+
+        // Open A via its ⋮ button.
+        menuBtnOf(actionsOf(results, 'a.txt')).click();
+        expect(menuA.hidden).toBe(false);
+
+        // Open B via right-click — A must close (only one menu at a time).
+        rowB.dispatchEvent(
+          new MouseEvent('contextmenu', {
+            cancelable: true,
+            bubbles: true,
+            clientX: 9,
+            clientY: 9,
+          }),
+        );
+        expect(menuB.hidden).toBe(false);
+        expect(menuA.hidden).toBe(true);
+      });
+
+      it('the ".." parent row has no .row-menu-btn / .row-menu and right-click opens nothing / does not preventDefault', async () => {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs/sub', parent: 'docs', entries: [file] }));
+
+        const parentRow = rowByName(results.querySelector('table')!, '..')!;
+        const parentActions = cellsOf(parentRow)[3];
+        expect(parentActions.querySelector('.row-menu-btn')).toBeNull();
+        expect(parentActions.querySelector('.row-menu')).toBeNull();
+        expect((parentActions.textContent ?? '').trim()).toBe('');
+
+        const evt = new MouseEvent('contextmenu', { cancelable: true, bubbles: true });
+        parentRow.dispatchEvent(evt);
+        // No menu appeared anywhere, and the event was NOT prevented (the
+        // parent row has no contextmenu handler).
+        expect(evt.defaultPrevented).toBe(false);
+        expect(results.querySelectorAll('.row-menu:not([hidden])')).toHaveLength(0);
+      });
     });
   });
 });

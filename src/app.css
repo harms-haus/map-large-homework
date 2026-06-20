@@ -288,3 +288,86 @@ body {
   justify-content: space-between;
   align-items: center;
 }
+
+/* ── Browse-table column alignment ──
+   Scoped to .browse-table so the search table (Name|Path|Size|Modified) is
+   not affected.  Column 1 (Name) stretches to fill remaining width; columns
+   2‑4 (Size, Modified, Actions) are right-aligned. */
+.browse-table th:nth-child(1),
+.browse-table td:nth-child(1) {
+  width: 100%;
+}
+.browse-table th:nth-child(2),
+.browse-table td:nth-child(2),
+.browse-table th:nth-child(3),
+.browse-table td:nth-child(3),
+.browse-table th:nth-child(4),
+.browse-table td:nth-child(4) {
+  text-align: right;
+}
+
+/* ── Three-dots row menu button ──
+   Hidden until the row is hovered or the button's own popup menu is open.
+   Uses the same muted-foreground / brighten-on-hover pattern as the dialog
+   close button. */
+.row-menu-btn {
+  background: none;
+  border: none;
+  color: #9a9a9a;
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 16px;
+  line-height: 1;
+  border-radius: 4px;
+  opacity: 0;
+  pointer-events: none;
+}
+.browse-table tbody tr:hover .row-menu-btn,
+.row-menu-btn[aria-expanded='true'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+.row-menu-btn:hover {
+  color: #e6e6e6;
+}
+
+/* ── Dropdown context menu ──
+   position: fixed so it is placed at viewport coordinates and is never
+   clipped by the .results { overflow:auto } scroll container or covered by
+   the sticky th (z-index:1).  A hidden-menu override is REQUIRED because the
+   UA display:none rule for [hidden] gets overridden by the author
+   display:flex rule below — same class of bug as .browser-dialog (see
+   comment above). */
+.row-menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 140px;
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  padding: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+}
+.row-menu[hidden] {
+  display: none;
+}
+
+/* ── Menu items ──
+   Flatten the generic .btn styling inside the dropdown.  The elements
+   themselves keep class="btn" so query-* / dataset tests that assert
+   className work unchanged. */
+.row-menu .btn {
+  background: none;
+  border: none;
+  color: #e6e6e6;
+  border-radius: 4px;
+  padding: 6px 10px;
+  width: 100%;
+  text-align: left;
+  justify-content: flex-start;
+}
+.row-menu .btn:hover {
+  background: #3a3d41;
+}

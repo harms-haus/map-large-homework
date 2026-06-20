@@ -1,7 +1,8 @@
 /**
  * Render a {@link BrowseResult} into the shared results/breadcrumb/status
- * elements: a four-column table (Name | Size | Modified | Actions) with an
- * optional leading ".." parent row.
+ * elements: a four-column table (Name | Size | Modified | —) with an empty
+ * Actions header cell and the browse-table CSS class, plus an optional
+ * leading ".." parent row.
  *
  * Operates against the DOM context established by `startApp` (via
  * `render-orchestrator.init`), so it always targets the most recently mounted
@@ -27,7 +28,8 @@ export function renderBrowse(result: BrowseResult): void {
   // Results table
   const resultsEl = getResults();
   resultsEl.innerHTML = '';
-  const table = buildTable(['Name', 'Size', 'Modified', 'Actions']);
+  const table = buildTable(['Name', 'Size', 'Modified', '']);
+  table.classList.add('browse-table');
   const tbody = table.querySelector('tbody')!;
 
   if (result.parent !== null) {

@@ -174,7 +174,7 @@ describe('render output depends only on result (route is irrelevant)', () => {
       );
       expect(status.textContent).toContain('1 files');
       let headers = Array.from(results.querySelectorAll('th')).map((h) => h.textContent!.trim());
-      expect(headers).toEqual(['Name', 'Size', 'Modified', 'Actions']);
+      expect(headers).toEqual(['Name', 'Size', 'Modified', '']);
 
       renderSearch({
         query: 'q',
@@ -206,7 +206,7 @@ describe('render output depends only on result (route is irrelevant)', () => {
         }),
       );
       const headers = Array.from(results.querySelectorAll('th')).map((h) => h.textContent!.trim());
-      expect(headers).toEqual(['Name', 'Size', 'Modified', 'Actions']);
+      expect(headers).toEqual(['Name', 'Size', 'Modified', '']);
       expect(status.textContent).toContain('1 files');
       expect(results.querySelectorAll('table')).toHaveLength(1);
     });

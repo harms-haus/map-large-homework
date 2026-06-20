@@ -167,3 +167,162 @@ describe('src/app.css — upload control keyboard accessibility', () => {
     });
   });
 });
+
+/* ===========================================================================
+ * Browse table — per-row action menu & browse-only column alignment
+ *
+ * The browse table carries `browse-table` IN ADDITION to the shared
+ * `results-table` class. It renders a per-row "⋮" button (`.row-menu-btn`)
+ * that opens a fixed-position dropdown (`.row-menu`) of `<button class="btn">`
+ * / `<a class="btn">` action items. These tests pin the CSS contract for those
+ * pieces plus the browse-only column alignment. As above, they parse the raw
+ * stylesheet because the vitest environment does not load app.css.
+ *
+ * Critical gotcha re-tested below (the SAME class of bug already documented for
+ * `.browser-dialog`): `.row-menu` closes via the HTML `hidden` attribute (UA
+ * `[hidden]{display:none}`), but the AUTHOR `.row-menu{display:flex}` rule would
+ * override the UA sheet and keep a closed menu visible on screen. An explicit,
+ * higher-specificity `.row-menu[hidden]{display:none}` override MUST exist.
+ * ========================================================================= */
+describe('src/app.css — browse table column alignment (scoped to .browse-table)', () => {
+  it('stretches the Name column (1st) to absorb the remaining table width', () => {
+    // width:100% on column 1 + the table being width:100% / table-layout:auto
+    // with nowrap cells means the other (content-width) columns hold their size
+    // and Name takes the remainder — the "flex:1-like" stretch for col 1.
+    const col1 = ruleDeclarations(/\.browse-table td:nth-child\(1\)/);
+    expect(col1, 'a .browse-table column-1 rule (td:nth-child(1)) must exist').not.toBeNull();
+    expect(/width\s*:\s*100%/.test(col1!), 'column 1 must set width:100%').toBe(true);
+    // The header cell must be covered too, not only the body cell.
+    expect(CSS, 'column-1 rule must also target th:nth-child(1)').toContain(
+      '.browse-table th:nth-child(1)',
+    );
+  });
+
+  it('right-aligns Size, Modified, Actions (columns 2-4) for header and body cells', () => {
+    // A single grouped rule lists th+td for columns 2,3,4 and sets
+    // text-align:right. We anchor on the LAST selector (td:nth-child(4)) so the
+    // helper captures this group rule's declaration block.
+    const rightAlign = ruleDeclarations(/\.browse-table td:nth-child\(4\)/);
+    expect(
+      rightAlign,
+      'a .browse-table right-align rule ending in td:nth-child(4) must exist',
+    ).not.toBeNull();
+    expect(
+      /text-align\s*:\s*right/.test(rightAlign!),
+      'columns 2-4 must set text-align:right',
+    ).toBe(true);
+    // The selector must enumerate th+td for each of columns 2, 3 and 4.
+    for (const n of [2, 3, 4]) {
+      expect(CSS, `column ${n} header cell must be targeted`).toContain(
+        `.browse-table th:nth-child(${n})`,
+      );
+      expect(CSS, `column ${n} body cell must be targeted`).toContain(
+        `.browse-table td:nth-child(${n})`,
+      );
+    }
+  });
+
+  it('does NOT alter the shared search table: global .results-table cells stay left-aligned', () => {
+    // The search table only has `results-table` (no `browse-table`), so its
+    // columns must keep the global text-align:left. This guards against the
+    // right-align being accidentally scoped to bare `.results-table`.
+    const cells = ruleDeclarations(/\.results-table td/);
+    expect(cells, 'the global .results-table td rule must still exist').not.toBeNull();
+    expect(/text-align\s*:\s*left/.test(cells!), 'search-table cells stay text-align:left').toBe(
+      true,
+    );
+  });
+});
+
+describe('src/app.css — row action "⋮" button (.row-menu-btn)', () => {
+  it('is a chromeless, muted, clickable button with compact sizing', () => {
+    const btn = ruleDeclarations(/\.row-menu-btn/);
+    expect(btn, 'a base .row-menu-btn { ... } rule must exist').not.toBeNull();
+    expect(/background\s*:\s*none/.test(btn!), 'background:none').toBe(true);
+    expect(/border\s*:\s*none/.test(btn!), 'border:none').toBe(true);
+    expect(/color\s*:\s*#9a9a9a/.test(btn!), 'muted foreground #9a9a9a').toBe(true);
+    expect(/cursor\s*:\s*pointer/.test(btn!), 'cursor:pointer').toBe(true);
+    expect(/border-radius\s*:\s*4px/.test(btn!), 'border-radius:4px').toBe(true);
+    expect(/font-size\s*:\s*16px/.test(btn!), 'font-size:16px').toBe(true);
+    expect(/line-height\s*:\s*1/.test(btn!), 'line-height:1').toBe(true);
+    // modest padding (e.g. 2px 6px); assert it is present and pixel-based.
+    expect(/padding\s*:\s*\d+px/.test(btn!), 'padding present').toBe(true);
+  });
+
+  it('is hidden and non-interactive by default (revealed only on hover/open)', () => {
+    const btn = ruleDeclarations(/\.row-menu-btn/)!;
+    expect(/opacity\s*:\s*0\b/.test(btn), 'opacity:0 by default').toBe(true);
+    expect(/pointer-events\s*:\s*none/.test(btn), 'pointer-events:none by default').toBe(true);
+  });
+
+  it('becomes visible + interactive on row hover and when its menu is open', () => {
+    // The grouped reveal rule covers both conditions; anchor on the
+    // [aria-expanded="true"] selector which is the last one before the brace.
+    const reveal = ruleDeclarations(/\.row-menu-btn\[aria-expanded="true"\]/);
+    expect(reveal, 'a reveal rule covering [aria-expanded="true"] must exist').not.toBeNull();
+    expect(/opacity\s*:\s*1/.test(reveal!), 'revealed opacity:1').toBe(true);
+    expect(/pointer-events\s*:\s*auto/.test(reveal!), 'revealed pointer-events:auto').toBe(true);
+    // Row-hover must also be one of the reveal selectors.
+    expect(CSS, 'hover reveal must include the browse row-hover selector').toContain(
+      '.browse-table tbody tr:hover .row-menu-btn',
+    );
+  });
+
+  it('brightens to full foreground on its own hover', () => {
+    const hover = ruleDeclarations(/\.row-menu-btn:hover/);
+    expect(hover, 'a .row-menu-btn:hover rule must exist').not.toBeNull();
+    expect(/color\s*:\s*#e6e6e6/.test(hover!), 'hover color #e6e6e6').toBe(true);
+  });
+});
+
+describe('src/app.css — row action dropdown menu (.row-menu)', () => {
+  it('is a fixed-position, flex-column overlay that floats above the scroll container', () => {
+    const menu = ruleDeclarations(/\.row-menu/);
+    expect(menu, 'a base .row-menu { ... } rule must exist').not.toBeNull();
+    // position:fixed so a menu placed at viewport clientX/clientY is NOT clipped
+    // by the .results{overflow:auto} scroll container and layers correctly.
+    expect(/position\s*:\s*fixed/.test(menu!), 'position:fixed').toBe(true);
+    // Must sit above the sticky th (which has z-index:1).
+    const z = menu!.match(/z-index\s*:\s*(\d+)/);
+    expect(z, 'z-index declared').not.toBeNull();
+    expect(Number(z![1]), 'z-index must be > 1 to sit above the sticky th').toBeGreaterThan(1);
+    expect(/display\s*:\s*flex/.test(menu!), 'display:flex').toBe(true);
+    expect(/flex-direction\s*:\s*column/.test(menu!), 'flex-direction:column').toBe(true);
+    expect(/min-width\s*:\s*140px/.test(menu!), 'min-width:140px').toBe(true);
+    expect(/box-shadow\s*:/.test(menu!), 'box-shadow present').toBe(true);
+    expect(/background\s*:\s*#2d2d30/.test(menu!), 'background:#2d2d30').toBe(true);
+    expect(/border-radius\s*:\s*4px/.test(menu!), 'border-radius:4px').toBe(true);
+  });
+
+  it('is actually hidden when [hidden] despite the author display:flex (critical override)', () => {
+    // Same class of bug as .browser-dialog above: the menu closes via the HTML
+    // `hidden` attribute (UA [hidden]{display:none}), but the author
+    // `.row-menu{display:flex}` rule overrides the UA sheet and would keep a
+    // closed menu visible. An explicit `.row-menu[hidden]{display:none}` rule
+    // (higher specificity than the base) MUST exist to defeat that.
+    const hidden = ruleDeclarations(/\.row-menu\[hidden\]/);
+    expect(hidden, 'a .row-menu[hidden] { ... } override rule must exist').not.toBeNull();
+    expect(/display\s*:\s*none/.test(hidden!), '.row-menu[hidden] must set display:none').toBe(
+      true,
+    );
+  });
+});
+
+describe('src/app.css — row menu items (.row-menu .btn)', () => {
+  it('flattens .btn into a full-width, left-aligned menu-item look', () => {
+    const item = ruleDeclarations(/\.row-menu \.btn/);
+    expect(item, 'a .row-menu .btn { ... } rule must exist').not.toBeNull();
+    expect(/background\s*:\s*none/.test(item!), 'background:none').toBe(true);
+    expect(/border\s*:\s*none/.test(item!), 'border:none').toBe(true);
+    expect(/color\s*:\s*#e6e6e6/.test(item!), 'color:#e6e6e6').toBe(true);
+    expect(/width\s*:\s*100%/.test(item!), 'width:100%').toBe(true);
+    expect(/text-align\s*:\s*left/.test(item!), 'text-align:left').toBe(true);
+    expect(/justify-content\s*:\s*flex-start/.test(item!), 'justify-content:flex-start').toBe(true);
+  });
+
+  it('shows a hover background on menu items', () => {
+    const hover = ruleDeclarations(/\.row-menu \.btn:hover/);
+    expect(hover, 'a .row-menu .btn:hover rule must exist').not.toBeNull();
+    expect(/background\s*:\s*#3a3d41/.test(hover!), 'hover background #3a3d41').toBe(true);
+  });
+});
