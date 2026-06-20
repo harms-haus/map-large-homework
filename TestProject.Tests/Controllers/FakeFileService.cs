@@ -22,6 +22,7 @@ public sealed class FakeFileService : IFileService
     public string? DeletePath;
     public MoveRequest? MoveRequest;
     public CopyRequest? CopyRequest;
+    public string? CreateDirectoryPath;
 
     // ----- configurable outputs / faults -----
     public BrowseResultDto BrowseResult = new(string.Empty, null, Array.Empty<FileEntryDto>(), 0, 0, 0L);
@@ -34,6 +35,7 @@ public sealed class FakeFileService : IFileService
     public Exception? DeleteException;
     public Exception? MoveException;
     public Exception? CopyException;
+    public Exception? CreateDirectoryException;
 
     public BrowseResultDto Browse(string relativePath)
     {
@@ -81,5 +83,11 @@ public sealed class FakeFileService : IFileService
     {
         CopyRequest = request;
         if (CopyException is not null) throw CopyException;
+    }
+
+    public void CreateDirectory(string relativePath)
+    {
+        CreateDirectoryPath = relativePath;
+        if (CreateDirectoryException is not null) throw CreateDirectoryException;
     }
 }

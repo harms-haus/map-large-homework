@@ -643,17 +643,18 @@ describe('renderBrowse', () => {
         expect((items[3].textContent ?? '').trim()).toBe('Copy');
       });
 
-      it('folder menu: Delete/Move/Copy only (NO Download anchor), inside .row-menu', async () => {
+      it('folder menu: Upload + Delete/Move/Copy (NO Download anchor), inside .row-menu', async () => {
         const { results } = await setupCleared();
         renderBrowse(browseResult({ path: 'docs', entries: [dir] }));
 
         const menu = menuOf(actionsOf(results, 'sub'));
         expect(menu.querySelector('a')).toBeNull();
         const items = Array.from(menu.children);
-        expect(items).toHaveLength(3);
-        expect((items[0].textContent ?? '').trim()).toBe('Delete');
-        expect((items[1].textContent ?? '').trim()).toBe('Move');
-        expect((items[2].textContent ?? '').trim()).toBe('Copy');
+        expect(items).toHaveLength(4);
+        expect((items[0].textContent ?? '').trim()).toBe('Upload');
+        expect((items[1].textContent ?? '').trim()).toBe('Delete');
+        expect((items[2].textContent ?? '').trim()).toBe('Move');
+        expect((items[3].textContent ?? '').trim()).toBe('Copy');
       });
 
       it('the ⋮ button is not matched by buttonsByText(Delete|Move|Copy) and is not an <a>', async () => {
@@ -678,6 +679,47 @@ describe('renderBrowse', () => {
 
         for (const row of dataRows(results.querySelector('table')!)) {
           expect(cellsOf(row)).toHaveLength(4);
+        }
+      });
+
+      it('renders a leading Bootstrap Icons glyph <i class="bi bi-<name>"> as the FIRST child of every menu item, with the label text unchanged', async () => {
+        // Each item: an empty <i class="bi bi-<name>"> glyph (Bootstrap Icons
+        // paints the glyph via CSS ::before, so the <i> adds no text content)
+        // followed by the label. Pinning the icon NAME per item guards against
+        // accidentally swapping or dropping a glyph, and asserting the label
+        // is still the item's full textContent guards the accessible name.
+        const expected = {
+          Download: 'bi-download',
+          Upload: 'bi-upload',
+          Delete: 'bi-trash',
+          Move: 'bi-arrows-move',
+          Copy: 'bi-files',
+        };
+
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file, dir] }));
+
+        // File menu: Download + Delete/Move/Copy. Folder menu: Upload +
+        // Delete/Move/Copy. Both must carry the correct glyph per label.
+        for (const name of ['a.txt', 'sub']) {
+          const items = Array.from(menuOf(actionsOf(results, name)).children);
+          expect(items).toHaveLength(4);
+          for (const item of items) {
+            const label = (item.textContent ?? '').trim();
+            const iconName = expected[label as keyof typeof expected];
+            expect(iconName, 'unexpected menu item label: ' + label).toBeTruthy();
+
+            // The glyph is the first child element.
+            const glyph = item.querySelector('.bi') as HTMLElement | null;
+            expect(glyph, label + ' item must have a .bi glyph').not.toBeNull();
+            expect(item.firstElementChild).toBe(glyph);
+            expect(glyph.tagName).toBe('I');
+            expect(glyph.className).toBe('bi ' + iconName);
+            // The icon element carries no text of its own, so the item's
+            // textContent is still exactly the label.
+            expect((glyph.textContent ?? '').length).toBe(0);
+            expect((item.textContent ?? '').trim()).toBe(label);
+          }
         }
       });
     });
@@ -813,10 +855,12 @@ describe('renderBrowse', () => {
           }),
         );
 
-        // No second menu was created — the now-visible menu IS the cell's menu.
-        expect(results.querySelectorAll('.row-menu')).toHaveLength(1);
+        // No second menu was created — the only VISIBLE menu is the cell's.
+        // (A hidden current-directory menu also lives in `results`; assert on
+        // non-hidden menus so this stays about the row's open menu.)
+        expect(results.querySelectorAll('.row-menu:not([hidden])')).toHaveLength(1);
         expect(menuInCell.hidden).toBe(false);
-        expect(document.querySelector('.row-menu')).toBe(menuInCell);
+        expect(document.querySelector('.row-menu:not([hidden])')).toBe(menuInCell);
       });
 
       it('opening a second row menu closes the first (only one open at a time)', async () => {
@@ -865,6 +909,200 @@ describe('renderBrowse', () => {
         expect(evt.defaultPrevented).toBe(false);
         expect(results.querySelectorAll('.row-menu:not([hidden])')).toHaveLength(0);
       });
+    });
+  });
+
+  /* =====================================================================
+   * Current-directory context menu (right-click on blank space)
+   *
+   * Right-clicking the blank area of the results view (not on a row or the
+   * header) opens a menu acting on the CURRENTLY browsed directory: Upload
+   * into it, or New directory (a subdirectory under it). The menu is a
+   * `.row-menu` that is a DIRECT child of `.results` (distinct from the
+   * per-row menus, which live inside the table cells).
+   * ===================================================================== */
+  describe('current-directory context menu (blank-space right-click)', () => {
+    const dir = fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true });
+    const file = fileEntry({ name: 'a.txt', path: 'docs/a.txt', isDirectory: false, size: 10 });
+
+    /** The directory menu: the `.row-menu` that is a direct child of .results. */
+    function dirMenuOf(results: HTMLElement): HTMLElement {
+      const menu = Array.from(results.children).find(
+        (c) => c instanceof HTMLElement && c.classList.contains('row-menu'),
+      ) as HTMLElement | undefined;
+      if (!menu) {
+        throw new Error('directory menu (.results > .row-menu) not found');
+      }
+      return menu;
+    }
+
+    function contextmenuBlank(results: HTMLElement, x = 50, y = 80): MouseEvent {
+      const evt = new MouseEvent('contextmenu', {
+        cancelable: true,
+        bubbles: true,
+        clientX: x,
+        clientY: y,
+      });
+      results.dispatchEvent(evt);
+      return evt;
+    }
+
+    beforeEach(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+
+    it('mounts a hidden .row-menu as a direct child of .results (distinct from the row menus)', async () => {
+      const { results } = await setupCleared();
+      renderBrowse(browseResult({ path: 'docs', entries: [dir, file] }));
+
+      const menu = dirMenuOf(results);
+      expect(menu.hidden).toBe(true);
+      // It is a sibling of the table, not inside a cell.
+      expect(menu.closest('td')).toBeNull();
+      expect(menu.closest('table')).toBeNull();
+    });
+
+    it('contains Upload then New directory, each a button.btn with the correct icon and no text-only collisions', async () => {
+      const { results } = await setupCleared();
+      renderBrowse(browseResult({ path: 'docs', entries: [dir] }));
+
+      const items = Array.from(dirMenuOf(results).children);
+      expect(items).toHaveLength(2);
+      expect(items[0].tagName).toBe('BUTTON');
+      expect((items[0].textContent ?? '').trim()).toBe('Upload');
+      expect((items[0].querySelector('.bi') as HTMLElement).className).toBe('bi bi-upload');
+      expect(items[1].tagName).toBe('BUTTON');
+      expect((items[1].textContent ?? '').trim()).toBe('New directory');
+      expect((items[1].querySelector('.bi') as HTMLElement).className).toBe('bi bi-folder-plus');
+    });
+
+    it('right-clicking blank space prevents default and opens the dir menu at the cursor', async () => {
+      const { results } = await setupCleared();
+      renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+
+      const menu = dirMenuOf(results);
+      const evt = contextmenuBlank(results, 137, 242);
+
+      expect(evt.defaultPrevented).toBe(true);
+      expect(menu.hidden).toBe(false);
+      expect(menu.style.left).toBe('137px');
+      expect(menu.style.top).toBe('242px');
+    });
+
+    it('New directory prompts for a name then POSTs mkdir for joinPath(currentDir, name) and re-renders', async () => {
+      const { results } = await setupCleared();
+      renderBrowse(browseResult({ path: 'docs', entries: [] }));
+      vi.spyOn(window, 'prompt').mockReturnValue('new folder');
+
+      buttonsByText(dirMenuOf(results), 'New directory')[0].click();
+      await flush();
+      await flush();
+
+      expect(window.prompt).toHaveBeenCalledWith('New directory name:', '');
+      const mkdirCalls = fetchMock.mock.calls.filter(
+        ([u, init]) => String(u).includes('/mkdir') && (init?.method ?? 'GET') === 'POST',
+      );
+      expect(mkdirCalls).toHaveLength(1);
+      // joinPath('docs', 'new folder') -> 'docs/new folder', URL-encoded.
+      expect(String(mkdirCalls[0][0])).toBe(
+        '/api/files/mkdir?path=' + encodeURIComponent('docs/new folder'),
+      );
+    });
+
+    it('New directory does nothing when the prompt is cancelled (null) or empty', async () => {
+      const { results } = await setupCleared();
+      renderBrowse(browseResult({ path: 'docs', entries: [] }));
+
+      vi.spyOn(window, 'prompt').mockReturnValue(null);
+      buttonsByText(dirMenuOf(results), 'New directory')[0].click();
+      await flush();
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/mkdir'))).toBe(false);
+
+      vi.spyOn(window, 'prompt').mockReturnValue('   ');
+      buttonsByText(dirMenuOf(results), 'New directory')[0].click();
+      await flush();
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/mkdir'))).toBe(false);
+    });
+
+    it('Upload opens a transient file picker targeting the current directory', async () => {
+      const { results } = await setupCleared();
+      renderBrowse(browseResult({ path: 'docs', entries: [] }));
+
+      buttonsByText(dirMenuOf(results), 'Upload')[0].click();
+
+      // pickAndUploadInto appended a transient <input type=file multiple> to body.
+      const picker = Array.from(document.querySelectorAll('input[type=file]')).find(
+        (i) => i.parentElement === document.body,
+      ) as HTMLInputElement | undefined;
+      expect(picker, 'a transient picker input must be appended to body').toBeTruthy();
+      expect(picker!.type).toBe('file');
+      expect(picker!.multiple).toBe(true);
+
+      // Cancel the picker so the awaited promise resolves and no upload runs.
+      picker!.dispatchEvent(new Event('cancel'));
+      await flush();
+      await flush();
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/upload'))).toBe(false);
+    });
+
+    it('right-clicking a data row opens the ROW menu, not the directory menu', async () => {
+      const { results } = await setupCleared();
+      renderBrowse(browseResult({ path: 'docs', entries: [dir] }));
+
+      const rowMenu = cellsOf(rowByName(results.querySelector('table')!, 'sub')!)[3].querySelector(
+        '.row-menu',
+      ) as HTMLElement;
+      const dMenu = dirMenuOf(results);
+
+      rowByName(results.querySelector('table')!, 'sub')!.dispatchEvent(
+        new MouseEvent('contextmenu', { cancelable: true, bubbles: true, clientX: 5, clientY: 5 }),
+      );
+
+      expect(rowMenu.hidden).toBe(false);
+      expect(dMenu.hidden).toBe(true);
+    });
+
+    it('opening the directory menu closes any open row menu (only one menu at a time)', async () => {
+      const { results } = await setupCleared();
+      renderBrowse(browseResult({ path: 'docs', entries: [dir] }));
+
+      const rowMenu = cellsOf(rowByName(results.querySelector('table')!, 'sub')!)[3].querySelector(
+        '.row-menu',
+      ) as HTMLElement;
+      const dMenu = dirMenuOf(results);
+
+      // Open the row menu first.
+      (
+        cellsOf(rowByName(results.querySelector('table')!, 'sub')!)[3].querySelector(
+          '.row-menu-btn',
+        ) as HTMLButtonElement
+      ).click();
+      expect(rowMenu.hidden).toBe(false);
+
+      // Blank-space right-click opens the dir menu and closes the row menu.
+      contextmenuBlank(results);
+      expect(dMenu.hidden).toBe(false);
+      expect(rowMenu.hidden).toBe(true);
+    });
+
+    it('right-clicking the header or the ".." parent row opens nothing (dir menu stays hidden)', async () => {
+      const { results } = await setupCleared();
+      renderBrowse(browseResult({ path: 'docs/sub', parent: 'docs', entries: [file] }));
+      const dMenu = dirMenuOf(results);
+
+      // Header (sticky th) is inside the table -> bailed.
+      const th = results.querySelector('table thead th')!;
+      const headerEvt = new MouseEvent('contextmenu', { cancelable: true, bubbles: true });
+      th.dispatchEvent(headerEvt);
+      expect(dMenu.hidden).toBe(true);
+      expect(headerEvt.defaultPrevented).toBe(false);
+
+      // Parent row is inside the table -> bailed.
+      const parentRow = rowByName(results.querySelector('table')!, '..')!;
+      const parentEvt = new MouseEvent('contextmenu', { cancelable: true, bubbles: true });
+      parentRow.dispatchEvent(parentEvt);
+      expect(dMenu.hidden).toBe(true);
+      expect(parentEvt.defaultPrevented).toBe(false);
     });
   });
 });

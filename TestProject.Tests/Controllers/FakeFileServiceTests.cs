@@ -73,6 +73,7 @@ public class FakeFileServiceTests
             ("DeletePath", typeof(string)),
             ("MoveRequest", typeof(MoveRequest)),
             ("CopyRequest", typeof(CopyRequest)),
+            ("CreateDirectoryPath", typeof(string)),
             // ----- configurable outputs / faults -----
             ("BrowseResult", typeof(BrowseResultDto)),
             ("SearchResult", typeof(SearchResultDto)),
@@ -84,6 +85,7 @@ public class FakeFileServiceTests
             ("DeleteException", typeof(Exception)),
             ("MoveException", typeof(Exception)),
             ("CopyException", typeof(Exception)),
+            ("CreateDirectoryException", typeof(Exception)),
         };
 
         // Exactly the documented set — catches dropped, renamed, or extra
@@ -101,7 +103,7 @@ public class FakeFileServiceTests
     }
 
     [Fact]
-    public void Declares_Exactly_The_Seven_IFileService_Methods()
+    public void Declares_Exactly_The_Eight_IFileService_Methods()
     {
         var methods = typeof(FakeFileService)
             .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
@@ -110,7 +112,7 @@ public class FakeFileServiceTests
             .ToArray();
 
         Assert.Equal(
-            new[] { "Browse", "Copy", "Delete", "Move", "ResolveFullPath", "Search", "UploadAsync" }
+            new[] { "Browse", "Copy", "CreateDirectory", "Delete", "Move", "ResolveFullPath", "Search", "UploadAsync" }
                 .OrderBy(n => n),
             methods.OrderBy(n => n));
     }
@@ -125,6 +127,7 @@ public class FakeFileServiceTests
         AssertMethod("Delete", typeof(void), typeof(string));
         AssertMethod("Move", typeof(void), typeof(MoveRequest));
         AssertMethod("Copy", typeof(void), typeof(CopyRequest));
+        AssertMethod("CreateDirectory", typeof(void), typeof(string));
     }
 
     // =====================================================================
@@ -146,6 +149,7 @@ public class FakeFileServiceTests
         Assert.Null(fake.DeletePath);
         Assert.Null(fake.MoveRequest);
         Assert.Null(fake.CopyRequest);
+        Assert.Null(fake.CreateDirectoryPath);
 
         // configurable faults start null
         Assert.Null(fake.BrowseException);
@@ -155,6 +159,7 @@ public class FakeFileServiceTests
         Assert.Null(fake.DeleteException);
         Assert.Null(fake.MoveException);
         Assert.Null(fake.CopyException);
+        Assert.Null(fake.CreateDirectoryException);
     }
 
     [Fact]
@@ -295,6 +300,16 @@ public class FakeFileServiceTests
         Assert.Same(request, fake.CopyRequest);
     }
 
+    [Fact]
+    public void CreateDirectory_Records_The_Provided_RelativePath()
+    {
+        var fake = new FakeFileService();
+
+        fake.CreateDirectory("docs/new");
+
+        Assert.Equal("docs/new", fake.CreateDirectoryPath);
+    }
+
     // =====================================================================
     // Configurable return values.
     // =====================================================================
@@ -418,6 +433,16 @@ public class FakeFileServiceTests
         Assert.Same(ex, thrown);
     }
 
+    [Fact]
+    public void CreateDirectory_Throws_The_Configured_Exception_Instance()
+    {
+        var ex = new InvalidOperationException("mkdir-boom");
+        var fake = new FakeFileService { CreateDirectoryException = ex };
+
+        var thrown = Assert.Throws<InvalidOperationException>(() => fake.CreateDirectory("any"));
+        Assert.Same(ex, thrown);
+    }
+
     // =====================================================================
     // Recording takes precedence observably: inputs are recorded *before*
     // the configured fault is thrown.
@@ -461,6 +486,10 @@ public class FakeFileServiceTests
         var copyReq = new CopyRequest("s", "d");
         Assert.Throws<InvalidOperationException>(() => copy.Copy(copyReq));
         Assert.Same(copyReq, copy.CopyRequest);
+
+        var createDirectory = new FakeFileService { CreateDirectoryException = new InvalidOperationException() };
+        Assert.Throws<InvalidOperationException>(() => createDirectory.CreateDirectory("cdp"));
+        Assert.Equal("cdp", createDirectory.CreateDirectoryPath);
     }
 
     // =====================================================================

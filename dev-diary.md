@@ -5,3 +5,5 @@ Development Diary
 3. Ran the Engin harness orchestrator with the "improve" workflow to clean up the codebase.
 4. Human Review: Found four distinct issues with the file service: Delete is broken on Windows (I use Arch btw); Upload doesn't check safe destination path; Windows control chars aren't caught by invalid chars; Symlinks allow escaping the sandbox.
 5. Added CI/CD: GitHub Actions workflow. Switched to oxlint (faaast). Added prettier. Fixed prettier, linting, and test errors.
+6. Added context menu and moved the action buttons into a drop-down menu using Engin.
+7. Cleaned up the context menu, adding an upload action and new directory action. Fixed the menu clamping onscreen. Added icons to the menu items.

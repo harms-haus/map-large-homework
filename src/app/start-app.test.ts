@@ -496,14 +496,16 @@ describe('import characterization (KEEP-list behaviors)', () => {
  *     by an independent mechanism that survives the deletion.
  *
  * Removed selectors under test:
- *   (1) `.results-table .folder-row td`  — no table row is ever given the
- *       `folder-row` class.
- *   (2) `.breadcrumb .separator`         — breadcrumb separators are class-less
+ *   (1) `.breadcrumb .separator`         — breadcrumb separators are class-less
  *       `<span>`s holding the literal "/"; nothing carries `separator`.
- *   (3) `.toolbar label.upload-btn` (+ its `:hover` + the descendant
+ *   (2) `.toolbar label.upload-btn` (+ its `:hover` + the descendant
  *       `input[type=file]` rule) — the upload label uses `btn`, never
  *       `upload-btn`, and the wrapped file input is hidden via the `hidden`
  *       HTML attribute, not via the dead `display:none` descendant rule.
+ *
+ * (`.folder-row` was formerly in this dead list, but it is now a LIVE class:
+ * folder rows and the ".." parent row carry `folder-row` / `parent-row` so the
+ * whole row is click-to-browse — see the dedicated suite below.)
  *
  * These assertions pass against the current (pre-cleanup) code AND must keep
  * passing after the dead rules are deleted, because they depend only on the
@@ -518,42 +520,6 @@ describe('import characterization (KEEP-list behaviors)', () => {
  * ignored at runtime; it is preserved verbatim so the scenario is unchanged.
  * ========================================================================= */
 describe('dead CSS selector characterization', () => {
-  describe('folder rows never carry the dead `.folder-row` class', () => {
-    it('browse rows (folder, file, and the ".." parent) all have an empty className and no `folder-row`', async () => {
-      const dir = fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true });
-      const file = fileEntry({ name: 'a.txt', path: 'docs/a.txt', isDirectory: false });
-      const { results } = await setupCleared();
-      renderBrowse(
-        browseResult({ path: 'docs/sub', parent: 'docs', entries: [dir, file] }),
-        browseRoute('docs/sub'),
-      );
-
-      const rows = dataRows(results.querySelector('table')!);
-      // parent + folder + file = 3 rows, so the assertions below are meaningful.
-      expect(rows).toHaveLength(3);
-      for (const row of rows) {
-        expect(row.className).toBe('');
-        expect(row.classList.contains('folder-row')).toBe(false);
-      }
-      // The dead selector `.results-table .folder-row td` matches nothing.
-      expect(document.querySelectorAll('.folder-row')).toHaveLength(0);
-    });
-
-    it('search rows also never carry the `folder-row` class', async () => {
-      const dir = fileEntry({ name: 'd', path: 'docs/d', isDirectory: true });
-      const file = fileEntry({ name: 'f.txt', path: 'docs/f.txt', isDirectory: false });
-      const { results } = await setupCleared();
-      renderSearch({ query: 'q', path: '', results: [dir, file] }, searchRoute('q'));
-
-      const rows = dataRows(results.querySelector('table')!);
-      expect(rows).toHaveLength(2);
-      for (const row of rows) {
-        expect(row.classList.contains('folder-row')).toBe(false);
-      }
-      expect(document.querySelectorAll('.folder-row')).toHaveLength(0);
-    });
-  });
-
   describe('breadcrumb separators are class-less spans (no `.separator`)', () => {
     /** Leaf <span>s whose visible text is exactly the breadcrumb slash. */
     function slashSeparators(container: Element): HTMLSpanElement[] {
@@ -628,5 +594,92 @@ describe('dead CSS selector characterization', () => {
       // own class. Deleting that dead rule cannot un-hide it.
       expect(uploadLabel.classList.contains('upload-btn')).toBe(false);
     });
+  });
+});
+
+/* ===========================================================================
+ * Click-to-browse rows — whole-row navigation
+ *
+ * Folder rows and the ".." parent row browse into their target on a click
+ * ANYWHERE in the row (not only on the name link), so a user is not forced to
+ * hit the narrow link. Clicks in a folder row's actions cell (the ⋮ button +
+ * its menu) are excluded so those controls keep working. File rows do nothing
+ * on left-click. The row classes `folder-row` / `parent-row` drive the pointer
+ * cursor (see app.css).
+ * ========================================================================= */
+describe('click-to-browse rows', () => {
+  it('folder rows carry `folder-row`, the ".." parent row carries `parent-row`, and file rows carry neither', async () => {
+    const dir = fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true });
+    const file = fileEntry({ name: 'a.txt', path: 'docs/a.txt', isDirectory: false });
+    const { results } = await setupCleared();
+    renderBrowse(browseResult({ path: 'docs/sub', parent: 'docs', entries: [dir, file] }));
+
+    const rows = dataRows(results.querySelector('table')!);
+    expect(rows).toHaveLength(3); // parent + folder + file
+    const [parentRow, folderRow, fileRow] = rows;
+    expect(parentRow.classList.contains('parent-row')).toBe(true);
+    expect(folderRow.classList.contains('folder-row')).toBe(true);
+    expect(fileRow.classList.contains('folder-row')).toBe(false);
+    expect(fileRow.classList.contains('parent-row')).toBe(false);
+    // Exactly the two navigable rows carry a click-to-browse class.
+    expect(document.querySelectorAll('.folder-row, .parent-row')).toHaveLength(2);
+  });
+
+  it('clicking the Size cell of a folder row navigates into the folder', async () => {
+    const dir = fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true });
+    const { results } = await setupCleared();
+    renderBrowse(browseResult({ path: 'docs', entries: [dir] }));
+
+    const folderRow = rowByName(results.querySelector('table')!, 'sub')!;
+    cellsOf(folderRow)[1].click(); // Size cell (em-dash) — not the name link
+
+    expect(window.location.hash).toBe(toBrowseHash('docs/sub'));
+  });
+
+  it('clicking the Modified cell of a folder row navigates into the folder', async () => {
+    const dir = fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true });
+    const { results } = await setupCleared();
+    renderBrowse(browseResult({ path: 'docs', entries: [dir] }));
+
+    const folderRow = rowByName(results.querySelector('table')!, 'sub')!;
+    cellsOf(folderRow)[2].click(); // Modified cell
+
+    expect(window.location.hash).toBe(toBrowseHash('docs/sub'));
+  });
+
+  it('clicking the ".." parent row (not its link) navigates to the parent path', async () => {
+    const { results } = await setupCleared();
+    renderBrowse(browseResult({ path: 'docs/sub', parent: 'docs', entries: [] }));
+
+    const parentRow = rowByName(results.querySelector('table')!, '..')!;
+    cellsOf(parentRow)[2].click(); // Modified cell — not the ".." link
+
+    expect(window.location.hash).toBe(toBrowseHash('docs'));
+  });
+
+  it('clicking a file row does NOT navigate', async () => {
+    const file = fileEntry({ name: 'a.txt', path: 'docs/a.txt', isDirectory: false });
+    const { results } = await setupCleared();
+    renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+    window.location.hash = '';
+
+    rowByName(results.querySelector('table')!, 'a.txt')!.click();
+
+    expect(window.location.hash).toBe('');
+  });
+
+  it('clicking the ⋮ button (in the actions cell) opens the menu and does NOT navigate', async () => {
+    const dir = fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true });
+    const { results } = await setupCleared();
+    renderBrowse(browseResult({ path: 'docs', entries: [dir] }));
+    window.location.hash = '';
+
+    const folderRow = rowByName(results.querySelector('table')!, 'sub')!;
+    const btn = cellsOf(folderRow)[3].querySelector('.row-menu-btn') as HTMLButtonElement;
+    const menu = cellsOf(folderRow)[3].querySelector('.row-menu') as HTMLElement;
+    btn.click();
+
+    expect(menu.hidden).toBe(false); // menu opened
+    expect(window.location.hash).toBe(''); // no navigation from the actions cell
   });
 });

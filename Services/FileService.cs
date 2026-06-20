@@ -339,6 +339,22 @@ public sealed class FileService : IFileService
         }
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// <see cref="Directory.CreateDirectory(string)"/> is idempotent (a no-op
+    /// when the directory already exists) and creates every missing parent, so
+    /// a multi-segment relative path materializes the whole chain. The path is
+    /// sandboxed by <see cref="SafeResolve"/> before any disk access, so a path
+    /// that escapes the home root throws <see cref="ArgumentException"/>
+    /// unchanged (translated to 400 by the controller). Creating over an
+    /// existing <em>file</em> path would throw <see cref="IOException"/>, which
+    /// the controller likewise translates to 400.
+    /// </remarks>
+    public void CreateDirectory(string relativePath)
+    {
+        Directory.CreateDirectory(SafeResolve(relativePath));
+    }
+
     // =====================================================================
     // Helpers
     // =====================================================================

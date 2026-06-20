@@ -15,6 +15,7 @@ import type { FileEntry } from '../api.js';
 import { formatBytes, formatDate, joinPath, normalizeRelativePath } from '../format.js';
 import { navigate, toBrowseHash } from '../router.js';
 import { getApi, getBreadcrumb, getStatus, rerender } from './context.js';
+import { pickAndUploadInto } from './toolbar-handlers.js';
 
 /* -------------------------------------------------------------------------
  * Row action menu open/close state
@@ -33,6 +34,156 @@ let openRowMenu: { close: () => void } | null = null;
 function closeAllRowMenus(): void {
   openRowMenu?.close();
   openRowMenu = null;
+}
+
+/**
+ * The rectangle a row menu is anchored to: either the ⋮ button's own rect
+ * (click) or a zero-size rect at the cursor (right-click). Only the four edges
+ * are read, so a real `DOMRect` satisfies this structurally without adaptation.
+ */
+export interface MenuAnchor {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+
+/** Pixel gap kept between the menu and each viewport edge when clamping. */
+export const MENU_EDGE_MARGIN = 4;
+
+/**
+ * Compute the CSS `left`/`top` for a `position: fixed` row menu so it stays on
+ * screen, opening below and left-aligned with `anchor` by default and flipping
+ * direction when that would run off the viewport:
+ *
+ *  - Vertical: open DOWN (top = `anchor.bottom`); if `anchor.bottom + height`
+ *    would overflow the bottom edge, flip to open UP (top = `anchor.top -
+ *    height`) so the menu's bottom edge meets the anchor's top.
+ *  - Horizontal: open LEFT-aligned (left = `anchor.left`); if `anchor.left +
+ *    width` would overflow the right edge, flip to RIGHT-align (left =
+ *    `anchor.right - width`) so the menu's right edge meets the anchor's right.
+ *
+ * Finally the result is clamped to at least {@link MENU_EDGE_MARGIN} so a menu
+ * larger than the viewport rests against the top-left corner instead of going
+ * negative.
+ *
+ * Pure (no DOM access) so the flip behavior can be unit-tested directly with
+ * arbitrary anchor / size / viewport triples; `openMenu` measures the real
+ * values and feeds them in.
+ */
+export function computeMenuPosition(
+  anchor: MenuAnchor,
+  size: { width: number; height: number },
+  viewport: { width: number; height: number },
+): { left: number; top: number } {
+  let left = anchor.left;
+  let top = anchor.bottom;
+
+  // Overflowing the right edge → open leftward (right-align to the anchor).
+  if (left + size.width > viewport.width - MENU_EDGE_MARGIN) {
+    left = anchor.right - size.width;
+  }
+  // Overflowing the bottom edge → open upward (bottom-align to the anchor).
+  if (top + size.height > viewport.height - MENU_EDGE_MARGIN) {
+    top = anchor.top - size.height;
+  }
+
+  // Clamp into the viewport (also covers a menu larger than the viewport).
+  if (left < MENU_EDGE_MARGIN) {
+    left = MENU_EDGE_MARGIN;
+  }
+  if (top < MENU_EDGE_MARGIN) {
+    top = MENU_EDGE_MARGIN;
+  }
+
+  return { left, top };
+}
+
+/**
+ * The viewport size used to flip/clamp menus. Falls back from
+ * `document.documentElement.clientWidth/Height` (the layout viewport) to
+ * `window.innerWidth/Height` — the fallback matters in test DOMs (e.g.
+ * happy-dom) where the `<html>` element reports a 0×0 client size.
+ */
+function getViewportSize(): { width: number; height: number } {
+  return {
+    width: document.documentElement.clientWidth || window.innerWidth,
+    height: document.documentElement.clientHeight || window.innerHeight,
+  };
+}
+
+/**
+ * Build a `.row-menu` dropdown from `items` with the shared open/close
+ * lifecycle used by EVERY menu in the browse view (the per-row ⋮ menu, the
+ * right-click row menu, and the current-directory blank-space menu). Returns
+ * the menu element plus its `openMenu`/`closeMenu` controls.
+ *
+ * Lifecycle:
+ *  - `openMenu(anchor)` first calls `closeAllRowMenus()` (the module-level
+ *    single-open invariant — at most one menu shows at a time across every
+ *    row and the directory menu), reveals the menu, measures it, and positions
+ *    it at `anchor` via {@link computeMenuPosition} (flipping/clamping to stay
+ *    on screen). It then registers one-shot document `click` (close on the
+ *    next click anywhere — outside OR on a menu item, after the item's own
+ *    handler has run) and `keydown` (close on Escape) listeners.
+ *  - `closeMenu()` hides the menu, removes both listeners, and clears the
+ *    module open-menu slot if it still points here.
+ *
+ * `btn`, when supplied (the ⋮ trigger), gets its `aria-expanded` toggled with
+ * the menu; a directory menu has no trigger button, so it omits `btn`.
+ */
+function createMenu(
+  items: HTMLElement[],
+  btn?: HTMLButtonElement,
+): {
+  menu: HTMLElement;
+  openMenu: (anchor: MenuAnchor) => void;
+  closeMenu: () => void;
+} {
+  const menu = document.createElement('div');
+  menu.className = 'row-menu';
+  menu.hidden = true;
+  menu.append(...items);
+
+  // Document listeners registered on open, removed on close. Kept as named
+  // references so removeEventListener tears down the exact functions.
+  function onDocClick(): void {
+    closeMenu();
+  }
+  function onDocKey(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      closeMenu();
+    }
+  }
+
+  function closeMenu(): void {
+    menu.hidden = true;
+    btn?.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', onDocClick);
+    document.removeEventListener('keydown', onDocKey);
+    if (openRowMenu?.close === closeMenu) {
+      openRowMenu = null;
+    }
+  }
+
+  function openMenu(anchor: MenuAnchor): void {
+    closeAllRowMenus();
+    menu.hidden = false;
+    const rect = menu.getBoundingClientRect();
+    const placement = computeMenuPosition(
+      anchor,
+      { width: rect.width, height: rect.height },
+      getViewportSize(),
+    );
+    menu.style.left = placement.left + 'px';
+    menu.style.top = placement.top + 'px';
+    btn?.setAttribute('aria-expanded', 'true');
+    document.addEventListener('click', onDocClick);
+    document.addEventListener('keydown', onDocKey);
+    openRowMenu = { close: closeMenu };
+  }
+
+  return { menu, openMenu, closeMenu };
 }
 
 /**
@@ -98,12 +249,15 @@ export function makeNavLink(text: string, hash: string): HTMLAnchorElement {
 /** The ".." parent row: a Name cell whose link navigates to the parent path. */
 export function makeParentRow(parent: string): HTMLTableRowElement {
   const row = document.createElement('tr');
+  row.classList.add('parent-row');
   const nameCell = document.createElement('td');
   nameCell.append(makeNavLink('..', toBrowseHash(parent)));
   const sizeCell = document.createElement('td');
   const modifiedCell = document.createElement('td');
   const actionsCell = document.createElement('td');
   row.append(nameCell, sizeCell, modifiedCell, actionsCell);
+  // Whole-row click browses to the parent (consistent with folder rows).
+  navigateRowOnClick(row, toBrowseHash(parent));
   return row;
 }
 
@@ -137,7 +291,7 @@ export function makeParentRow(parent: string): HTMLTableRowElement {
 function makeRowMenu(entry: FileEntry): {
   btn: HTMLButtonElement;
   menu: HTMLElement;
-  openMenu: (x: number, y: number) => void;
+  openMenu: (anchor: MenuAnchor) => void;
 } {
   const btn = document.createElement('button');
   btn.className = 'row-menu-btn';
@@ -147,80 +301,66 @@ function makeRowMenu(entry: FileEntry): {
   btn.setAttribute('aria-expanded', 'false');
   btn.textContent = '⋮';
 
-  const menu = document.createElement('div');
-  menu.className = 'row-menu';
-  menu.hidden = true;
-
-  // Menu items — same handlers/attributes as the former inline controls.
-  if (!entry.isDirectory) {
+  // Menu items. Folders get an Upload-into-this-folder action first; files
+  // get a Download anchor first. Both then get Delete / Move / Copy. Each
+  // item carries a leading Bootstrap Icons glyph (see makeIcon) so the action
+  // is recognizable at a glance; the label text follows.
+  const items: HTMLElement[] = [];
+  if (entry.isDirectory) {
+    items.push(makeActionButton('Upload', () => pickAndUploadInto(entry.path), 'upload'));
+  } else {
     const download = document.createElement('a');
     download.className = 'btn';
     download.setAttribute('href', getApi().downloadUrl(entry.path));
     download.setAttribute('download', entry.name);
-    download.textContent = 'Download';
-    menu.append(download);
+    download.append(makeIcon('download'), 'Download');
+    items.push(download);
   }
-  menu.append(
-    makeActionButton('Delete', async () => {
-      if (!window.confirm('Delete "' + entry.name + '"?')) {
-        return;
-      }
-      await getApi().delete(entry.path);
-      rerender();
-    }),
+  items.push(
+    makeActionButton(
+      'Delete',
+      async () => {
+        if (!window.confirm('Delete "' + entry.name + '"?')) {
+          return;
+        }
+        await getApi().delete(entry.path);
+        rerender();
+      },
+      'trash',
+    ),
   );
-  menu.append(
-    makeActionButton('Move', async () => {
-      const dest = window.prompt('Move to relative destination path:', entry.path);
-      if (dest === null) {
-        return;
-      }
-      await getApi().move(entry.path, normalizeRelativePath(dest));
-      rerender();
-    }),
+  items.push(
+    makeActionButton(
+      'Move',
+      async () => {
+        const dest = window.prompt('Move to relative destination path:', entry.path);
+        if (dest === null) {
+          return;
+        }
+        await getApi().move(entry.path, normalizeRelativePath(dest));
+        rerender();
+      },
+      'arrows-move',
+    ),
   );
-  menu.append(
-    makeActionButton('Copy', async () => {
-      const dest = window.prompt('Copy to relative destination path:', entry.path);
-      if (dest === null) {
-        return;
-      }
-      await getApi().copy(entry.path, normalizeRelativePath(dest));
-      rerender();
-    }),
+  items.push(
+    makeActionButton(
+      'Copy',
+      async () => {
+        const dest = window.prompt('Copy to relative destination path:', entry.path);
+        if (dest === null) {
+          return;
+        }
+        await getApi().copy(entry.path, normalizeRelativePath(dest));
+        rerender();
+      },
+      'files',
+    ),
   );
 
-  // Document listeners registered on open, removed on close. Kept as named
-  // references so removeEventListener tears down the exact functions.
-  function onDocClick(): void {
-    closeMenu();
-  }
-  function onDocKey(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      closeMenu();
-    }
-  }
-
-  function closeMenu(): void {
-    menu.hidden = true;
-    btn.setAttribute('aria-expanded', 'false');
-    document.removeEventListener('click', onDocClick);
-    document.removeEventListener('keydown', onDocKey);
-    if (openRowMenu?.close === closeMenu) {
-      openRowMenu = null;
-    }
-  }
-
-  function openMenu(x: number, y: number): void {
-    closeAllRowMenus();
-    menu.style.left = x + 'px';
-    menu.style.top = y + 'px';
-    menu.hidden = false;
-    btn.setAttribute('aria-expanded', 'true');
-    document.addEventListener('click', onDocClick);
-    document.addEventListener('keydown', onDocKey);
-    openRowMenu = { close: closeMenu };
-  }
+  // Shared open/close + positioning lifecycle (see createMenu). The ⋮ button
+  // is passed so its aria-expanded toggles with the menu.
+  const { menu, openMenu, closeMenu } = createMenu(items, btn);
 
   // Toggle: open below the button, or close if already open. stopPropagation on
   // the OPENING click is critical — without it the click would bubble to the
@@ -228,14 +368,97 @@ function makeRowMenu(entry: FileEntry): {
   btn.addEventListener('click', (event) => {
     if (menu.hidden) {
       event.stopPropagation();
-      const rect = btn.getBoundingClientRect();
-      openMenu(rect.left, rect.bottom);
+      openMenu(btn.getBoundingClientRect());
     } else {
       closeMenu();
     }
   });
 
   return { btn, menu, openMenu };
+}
+
+/* -------------------------------------------------------------------------
+ * Current-directory context menu (right-click on blank space)
+ *
+ * Right-clicking the blank area of the results view (NOT on a row or the
+ * header) opens a menu that acts on the CURRENTLY browsed directory: upload
+ * into it, or create a new subdirectory. The menu for the current dir is
+ * rebuilt on every render (the path changes with navigation) and lives as a
+ * hidden `.row-menu` inside the results element; `openCurrentDirMenu` is the
+ * latest menu's open function, read by the once-attached `contextmenu`
+ * listener so it always targets the current directory.
+ * ---------------------------------------------------------------------- */
+let openCurrentDirMenu: (anchor: MenuAnchor) => void = () => {};
+
+/**
+ * Build the current-directory menu for `dirPath`: Upload (into `dirPath`) then
+ * New directory (a new subdirectory under `dirPath`). Has no trigger button —
+ * it is opened only by the results-view `contextmenu` listener.
+ */
+function makeDirMenu(dirPath: string): {
+  menu: HTMLElement;
+  openMenu: (anchor: MenuAnchor) => void;
+} {
+  const items: HTMLElement[] = [
+    makeActionButton('Upload', () => pickAndUploadInto(dirPath), 'upload'),
+    makeActionButton(
+      'New directory',
+      async () => {
+        const name = window.prompt('New directory name:', '');
+        // Empty / whitespace-only names (and a cancelled prompt) do nothing.
+        // joinPath normalizes the combined path, and the service's SafeResolve
+        // sandboxes it again, so a traversal-laden name cannot escape root.
+        if (name === null || name.trim() === '') {
+          return;
+        }
+        await getApi().createDirectory(joinPath(dirPath, name));
+        rerender();
+      },
+      'folder-plus',
+    ),
+  ];
+  return createMenu(items);
+}
+
+/**
+ * Mount the current-directory menu for `dirPath` into `resultsEl` and wire the
+ * blank-space `contextmenu` listener. Called from `renderBrowse` on every
+ * render: the menu is rebuilt + re-appended each time (cleared by the render's
+ * `innerHTML = ''`), while the listener attaches exactly once per results
+ * element (guarded by a data attribute, since the results element persists
+ * across renders within a mount).
+ *
+ * The listener opens the current-dir menu ONLY for genuine blank space: a
+ * right-click whose target is inside the `table` (any header or data row —
+ * folder/file rows handle themselves via their own listeners, and the ".."
+ * parent row is navigation-only) or inside an already-open `.row-menu` is
+ * ignored, so those keep their existing behavior.
+ */
+export function setupDirContextMenu(resultsEl: HTMLElement, dirPath: string): void {
+  const { menu, openMenu } = makeDirMenu(dirPath);
+  resultsEl.append(menu);
+  openCurrentDirMenu = openMenu;
+
+  if (resultsEl.dataset.dirMenuWired === '1') {
+    return;
+  }
+  resultsEl.dataset.dirMenuWired = '1';
+  resultsEl.addEventListener('contextmenu', (event) => {
+    if (
+      !(event.target instanceof Element) ||
+      event.target.closest('table') !== null ||
+      event.target.closest('.row-menu') !== null
+    ) {
+      return;
+    }
+    event.preventDefault();
+    openCurrentDirMenu({
+      left: event.clientX,
+      top: event.clientY,
+      right: event.clientX,
+      bottom: event.clientY,
+    });
+  });
 }
 
 /** One data row in the browse table (a file or folder entry). */
@@ -267,26 +490,90 @@ export function makeBrowseRow(entry: FileEntry): HTMLTableRowElement {
   actionsCell.append(btn, menu);
   row.addEventListener('contextmenu', (event) => {
     event.preventDefault();
-    openMenu(event.clientX, event.clientY);
+    // Zero-size anchor at the cursor: the menu opens with its top-left at the
+    // cursor (extending right/down) and flips to extend left/up only when that
+    // would leave the viewport — see computeMenuPosition.
+    openMenu({
+      left: event.clientX,
+      top: event.clientY,
+      right: event.clientX,
+      bottom: event.clientY,
+    });
   });
 
   row.append(nameCell, sizeCell, modifiedCell, actionsCell);
+
+  // A whole folder row browses into the folder on click (not just the name
+  // link), EXCEPT clicks in the actions cell (the ⋮ button + its menu) which
+  // keep their own behavior. The name link stays in place for middle-click /
+  // copy-link accessibility; clicking it calls navigate() with the same hash,
+  // and the bubbled row call repeats that same no-op (setting the hash to its
+  // current value fires no hashchange, so there is no double render).
+  if (entry.isDirectory) {
+    row.classList.add('folder-row');
+    navigateRowOnClick(row, toBrowseHash(entry.path), actionsCell);
+  }
+
   return row;
 }
 
 /**
- * Build a `<button class="btn">` with the given label and click handler.
+ * Make a table row navigate to `hash` on a click anywhere within it, so folder
+ * and parent rows browse on a whole-row click rather than only on the name
+ * link. Clicks originating inside `except` (e.g. a folder row's actions cell —
+ * the ⋮ button and its menu) are ignored so those controls keep working.
+ *
+ * `event.target instanceof Node` both narrows the `EventTarget | null` target
+ * to a `Node` for `Element.contains` (type-safe, no cast) and guards against a
+ * null target in edge synthetic events.
+ */
+function navigateRowOnClick(row: HTMLTableRowElement, hash: string, except?: Element): void {
+  row.addEventListener('click', (event) => {
+    if (except && event.target instanceof Node && except.contains(event.target)) {
+      return;
+    }
+    navigate(hash);
+  });
+}
+
+/**
+ * Build a Bootstrap Icons glyph element: an empty `<i class="bi bi-<name>">`.
+ * The glyph itself is painted by the bootstrap-icons stylesheet's `::before`
+ * pseudo-element (content set in CSS), so the element has NO text content of
+ * its own — which keeps `textContent` assertions on the parent (e.g. a menu
+ * item whose visible label is "Download") unchanged.
+ */
+export function makeIcon(name: string): HTMLElement {
+  const icon = document.createElement('i');
+  icon.className = 'bi bi-' + name;
+  return icon;
+}
+
+/**
+ * Build a `<button class="btn">` with the given label and click handler, and an
+ * optional leading Bootstrap Icons glyph.
  *
  * The handler is wrapped so that any synchronous throw or promise rejection
  * surfaces the error via the status footer — consistent with how `render()`
  * already displays fetch errors. On normal resolution no error message is
  * shown.
+ *
+ * When `icon` is given it is prepended as `makeIcon(icon)` (an empty `<i>`),
+ * followed by the label as a bare text node — so the button's `textContent`
+ * remains exactly `label` and its `className` stays exactly `"btn"`.
  */
-export function makeActionButton(label: string, handler: () => void): HTMLButtonElement {
+export function makeActionButton(
+  label: string,
+  handler: () => void,
+  icon?: string,
+): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.className = 'btn';
   btn.type = 'button';
-  btn.textContent = label;
+  if (icon) {
+    btn.append(makeIcon(icon));
+  }
+  btn.append(label);
   btn.addEventListener('click', () => {
     try {
       Promise.resolve(handler()).catch((err: unknown) => {

@@ -68,6 +68,12 @@ export class ApiClient {
     });
   }
 
+  async createDirectory(path: string): Promise<void> {
+    await this.request<unknown>(`${this.baseUrl}/mkdir?path=${encodeURIComponent(path)}`, {
+      method: 'POST',
+    });
+  }
+
   downloadUrl(path: string): string {
     return `${this.baseUrl}/download?path=${encodeURIComponent(path)}`;
   }

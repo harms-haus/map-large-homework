@@ -22,6 +22,7 @@ import {
   fetchMock,
   installAppTestLifecycle,
 } from './test-helpers';
+import { pickAndUploadInto } from './toolbar-handlers';
 
 installAppTestLifecycle();
 
@@ -260,6 +261,119 @@ describe('toolbar handlers', () => {
       // summary is what the re-render leaves behind.
       expect(status.textContent).not.toMatch(/failed/i);
       expect(status.textContent).toMatch(/folders.*files.*total/);
+    });
+  });
+
+  describe('pickAndUploadInto (upload into an arbitrary folder)', () => {
+    // Exercises pickAndUploadInto directly: it builds a transient
+    // <input type=file multiple>, awaits its change/cancel, uploads every
+    // chosen file into the GIVEN path (not the current route), then removes
+    // the input and re-renders — mirroring handleUpload's contract but with a
+    // caller-chosen destination.
+
+    /** Grab the transient picker input that pickAndUploadInto appended to body. */
+    function findPickerInput(): HTMLInputElement | undefined {
+      // The transient input is a DIRECT child of <body>; the toolbar upload
+      // input lives inside <label class="btn">, so its parent is not body.
+      return Array.from(document.querySelectorAll('input[type=file]')).find(
+        (i) => i.parentElement === document.body,
+      ) as HTMLInputElement | undefined;
+    }
+
+    function setFiles(input: HTMLInputElement, names: string[]): void {
+      const dt = new DataTransfer();
+      for (const n of names) dt.items.add(new File(['data-' + n], n));
+      input.files = dt.files as unknown as FileList;
+    }
+
+    const settle = async (n = 10): Promise<void> => {
+      for (let i = 0; i < n; i++) await flush();
+    };
+
+    function uploadCalls(): [string, RequestInit | undefined][] {
+      return fetchMock.mock.calls.filter(
+        ([u, init]) => String(u).includes('/upload') && (init?.method ?? 'GET') === 'POST',
+      );
+    }
+
+    it('creates a hidden <input type=file multiple> appended to body, then uploads each file into the given path', async () => {
+      setup({ hash: toBrowseHash('current/dir') });
+      await flush();
+
+      // Suspend on the awaited picker: do NOT await yet.
+      const p = pickAndUploadInto('target/folder');
+      const pickInput = findPickerInput();
+      expect(pickInput, 'a transient picker input must be appended to body').toBeTruthy();
+      expect(pickInput!.type).toBe('file');
+      expect(pickInput!.multiple).toBe(true);
+
+      setFiles(pickInput!, ['a.txt', 'b.txt']);
+      pickInput!.dispatchEvent(new Event('change'));
+      await p;
+      await settle();
+
+      // Uploads target the GIVEN path, NOT the current route.
+      expect(uploadCalls()).toHaveLength(2);
+      expect(
+        uploadCalls().every(([u]) =>
+          String(u).includes('path=' + encodeURIComponent('target/folder')),
+        ),
+      ).toBe(true);
+      // The transient input was removed after the upload loop.
+      expect(findPickerInput()).toBeUndefined();
+    });
+
+    it('uploads nothing and removes the input when the picker is cancelled (no files)', async () => {
+      setup({ hash: toBrowseHash('docs') });
+      await flush();
+
+      const p = pickAndUploadInto('target/folder');
+      const pickInput = findPickerInput();
+      expect(pickInput).toBeTruthy();
+
+      // Dismiss the picker without choosing — the `cancel` event resolves
+      // the awaited promise with an empty list.
+      pickInput!.dispatchEvent(new Event('cancel'));
+      await p;
+      await settle();
+
+      expect(uploadCalls()).toHaveLength(0);
+      expect(findPickerInput()).toBeUndefined();
+    });
+
+    it('surfaces per-file failures in the status footer while still uploading the rest', async () => {
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        const u = String(url);
+        const method = (init?.method ?? 'GET').toUpperCase();
+        if (method === 'POST' && u.includes('/upload')) {
+          const file = (init?.body as FormData | undefined)?.get('file') as File | null;
+          if (file && file.name === 'bad.txt') {
+            return mockResponse({ ok: false, status: 413, text: 'too large' });
+          }
+          return mockResponse({ status: 200, body: { path: file?.name ?? '' } });
+        }
+        if (method === 'GET' && u.includes('/browse')) {
+          return mockResponse({ body: browseResult({ path: 'target/folder', entries: [] }) });
+        }
+        return mockResponse({ status: 200, body: {} });
+      });
+      const { status } = setup({ hash: toBrowseHash('docs') });
+      await flush();
+
+      const p = pickAndUploadInto('target/folder');
+      const pickInput = findPickerInput();
+      setFiles(pickInput!, ['good.txt', 'bad.txt']);
+      pickInput!.dispatchEvent(new Event('change'));
+      await p;
+      await settle();
+
+      // Both were attempted; only bad.txt is flagged.
+      expect(
+        uploadCalls().map(([, init]) => ((init!.body as FormData).get('file') as File).name),
+      ).toEqual(['good.txt', 'bad.txt']);
+      expect(status.textContent).toMatch(/failed/i);
+      expect(status.textContent).toContain('bad.txt');
+      expect(status.textContent).not.toContain('good.txt');
     });
   });
 });

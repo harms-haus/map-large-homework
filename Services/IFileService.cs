@@ -50,4 +50,11 @@ public interface IFileService
     /// <paramref name="request.DestinationPath"/>.
     /// </summary>
     void Copy(CopyRequest request);
+
+    /// <summary>
+    /// Creates the directory at <paramref name="relativePath"/> (including any
+    /// missing parent directories), confined to the home root. Idempotent: a
+    /// path that already exists as a directory is a no-op.
+    /// </summary>
+    void CreateDirectory(string relativePath);
 }

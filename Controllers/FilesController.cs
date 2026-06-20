@@ -154,6 +154,23 @@ public class FilesController : ControllerBase
         });
 
     // =====================================================================
+    // Create directory
+    // =====================================================================
+
+    /// <summary>
+    /// Creates the directory at <paramref name="path"/> (including any missing
+    /// parents), creating the home root itself when omitted or empty. The
+    /// operation is idempotent: an existing directory is left as-is.
+    /// </summary>
+    [HttpPost("mkdir")]
+    public IActionResult CreateDirectory([FromQuery] string? path)
+        => Execute(() =>
+        {
+            _service.CreateDirectory(path ?? string.Empty);
+            return Ok(new { success = true });
+        });
+
+    // =====================================================================
     // Helpers
     // =====================================================================
 

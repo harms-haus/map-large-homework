@@ -1059,6 +1059,74 @@ public class FileServiceTests : IDisposable
     }
 
     // =====================================================================
+    // CreateDirectory
+    // =====================================================================
+
+    [Fact]
+    public void CreateDirectory_CreatesDirectory_AtRelativePath()
+    {
+        var (service, root) = CreateService();
+        var dir = Path.Combine(root, "newfolder");
+
+        Assert.False(Directory.Exists(dir));
+
+        service.CreateDirectory("newfolder");
+
+        Assert.True(Directory.Exists(dir));
+    }
+
+    [Fact]
+    public void CreateDirectory_CreatesMissingParentDirectories()
+    {
+        // Directory.CreateDirectory materializes every missing parent, so a
+        // multi-segment relative path produces the whole chain — the same
+        // behavior Move relies on for its destination parent.
+        var (service, root) = CreateService();
+        var leaf = Path.Combine(root, "a", "b", "c");
+
+        service.CreateDirectory("a/b/c");
+
+        Assert.True(Directory.Exists(leaf));
+        Assert.True(Directory.Exists(Path.Combine(root, "a")));
+        Assert.True(Directory.Exists(Path.Combine(root, "a", "b")));
+    }
+    [Fact]
+    public void CreateDirectory_IsIdempotent_WhenDirectoryAlreadyExists()
+    {
+        var (service, root) = CreateService();
+        var dir = Path.Combine(root, "exists");
+        Directory.CreateDirectory(dir);
+
+        // Creating an already-present directory is a documented no-op of
+        // Directory.CreateDirectory; it must not throw.
+        var ex = Record.Exception(() => service.CreateDirectory("exists"));
+
+        Assert.Null(ex);
+        Assert.True(Directory.Exists(dir));
+    }
+
+    [Fact]
+    public void CreateDirectory_EmptyPath_MaterializesHomeRootWithoutThrowing()
+    {
+        // An empty/whitespace path resolves to the home root itself; creating
+        // it must succeed (and materialize the lazily-created root).
+        var (service, root) = CreateService();
+
+        var ex = Record.Exception(() => service.CreateDirectory(string.Empty));
+
+        Assert.Null(ex);
+        Assert.True(Directory.Exists(root));
+    }
+
+    [Fact]
+    public void CreateDirectory_PathEscapingRoot_ThrowsArgumentException()
+    {
+        var (service, _) = CreateService();
+
+        Assert.Throws<ArgumentException>(() => service.CreateDirectory("../escape"));
+    }
+
+    // =====================================================================
     // Move
     // =====================================================================
 

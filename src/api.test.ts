@@ -265,6 +265,37 @@ describe('ApiClient', () => {
     });
   });
 
+  describe('createDirectory', () => {
+    it('POSTs to the mkdir endpoint with an encoded path and resolves void on success', async () => {
+      const client = new ApiClient();
+      fetchMock.mockResolvedValueOnce(mockResponse({ status: 200, body: { success: true } }));
+
+      const result = await client.createDirectory('docs/new folder');
+
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('/api/files/mkdir?path=' + encodeURIComponent('docs/new folder'));
+      expect(init?.method).toBe('POST');
+      // No request body — the path rides in the query string.
+      expect(init?.body).toBeUndefined();
+      expect(result).toBeUndefined();
+    });
+
+    it('encodes the path', async () => {
+      const client = new ApiClient();
+      fetchMock.mockResolvedValueOnce(mockResponse({ status: 200 }));
+      const p = 'a b/c?d=1';
+      await client.createDirectory(p);
+      const [url] = fetchMock.mock.calls[0];
+      expect(url).toBe('/api/files/mkdir?path=' + encodeURIComponent(p));
+    });
+
+    it('throws on non-2xx', async () => {
+      const client = new ApiClient();
+      fetchMock.mockResolvedValueOnce(mockResponse({ status: 400, text: 'Bad Request' }));
+      await expect(client.createDirectory('../escape')).rejects.toThrow('400: Bad Request');
+    });
+  });
+
   describe('downloadUrl', () => {
     it('returns the encoded download URL synchronously without calling fetch', () => {
       const client = new ApiClient();

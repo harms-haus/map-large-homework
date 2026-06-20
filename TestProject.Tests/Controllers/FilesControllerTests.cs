@@ -787,6 +787,83 @@ public class FilesControllerTests
     }
 
     // =====================================================================
+    // Create directory
+    // =====================================================================
+
+    [Fact]
+    public void CreateDirectory_ReturnsOk200_WithSuccessTrue()
+    {
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+
+        var result = controller.CreateDirectory("docs/new");
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(StatusCodes.Status200OK, ok.StatusCode);
+        Assert.Equal(true, GetProperty(ok.Value!, "success"));
+    }
+
+    [Fact]
+    public void CreateDirectory_PassesPathToService()
+    {
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+
+        controller.CreateDirectory("docs/sub/new");
+
+        Assert.Equal("docs/sub/new", fake.CreateDirectoryPath);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void CreateDirectory_PassesEmptyString_WhenPathIsNullOrEmpty(string? path)
+    {
+        // A missing/empty path must reach the service as the empty string
+        // (the home root itself), never as null — the service is not nullable.
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+
+        controller.CreateDirectory(path);
+
+        Assert.Equal(string.Empty, fake.CreateDirectoryPath);
+    }
+
+    [Theory]
+    [InlineData("docs\\sub")]
+    [InlineData("/docs/")]
+    [InlineData("./docs")]
+    [InlineData("docs/../sub")]
+    [InlineData("//docs//sub//")]
+    public void CreateDirectory_PassesRawPathToService_EvenWhenNonCanonical(string path)
+    {
+        // The service call must NOT be normalized at the controller layer: it
+        // still receives the raw query value so its own SafeResolve can sandbox
+        // the path. (CreateDirectory returns only { success }, so there is no
+        // response-path normalization to pin here, unlike Upload.)
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+
+        controller.CreateDirectory(path);
+
+        Assert.Equal(path, fake.CreateDirectoryPath);
+    }
+
+    [Theory]
+    [MemberData(nameof(CaughtExceptions))]
+    public void CreateDirectory_WhenServiceThrows_ReturnsBadRequest400_WithErrorMessage(Exception ex)
+    {
+        var fake = new FakeFileService { CreateDirectoryException = ex };
+        var controller = CreateController(fake);
+
+        var result = controller.CreateDirectory("any");
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+    }
+
+    // =====================================================================
     // A non-translated exception must propagate (not be swallowed as 400).
     // =====================================================================
 
@@ -867,6 +944,15 @@ public class FilesControllerTests
         var controller = CreateController(fake);
 
         Assert.Throws<InvalidOperationException>(() => controller.Copy(new CopyRequest("a", "b")));
+    }
+
+    [Fact]
+    public void CreateDirectory_DoesNotSwallowUnhandledExceptions()
+    {
+        var fake = new FakeFileService { CreateDirectoryException = new InvalidOperationException("boom") };
+        var controller = CreateController(fake);
+
+        Assert.Throws<InvalidOperationException>(() => controller.CreateDirectory("any"));
     }
 
     // =====================================================================
@@ -985,6 +1071,20 @@ public class FilesControllerTests
     }
 
     [Fact]
+    public void CreateDirectory_SuccessPayload_HasExactlyOneBooleanPropertyNamedSuccess()
+    {
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+
+        var result = controller.CreateDirectory("docs/new");
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var property = AssertSingleProperty(ok.Value!, "success");
+        Assert.Equal(typeof(bool), property.PropertyType);
+        Assert.Equal(true, property.GetValue(ok.Value));
+    }
+
+    [Fact]
     public async Task Upload_PathPayload_HasExactlyOneStringPropertyNamedPath()
     {
         var fake = new FakeFileService();
@@ -1085,6 +1185,17 @@ public class FilesControllerTests
         Assert.Equal(1, service.CopyCalls);
     }
 
+    [Fact]
+    public void CreateDirectory_InvokesServiceExactlyOnce()
+    {
+        var service = new CountingFileService();
+        var controller = new FilesController(service);
+
+        controller.CreateDirectory("docs/new");
+
+        Assert.Equal(1, service.CreateDirectoryCalls);
+    }
+
     /// <summary>
     /// Minimal <see cref="IFileService"/> double that counts how many times
     /// each method is invoked, used to assert the endpoint bodies run exactly
@@ -1100,6 +1211,7 @@ public class FilesControllerTests
         public int DeleteCalls;
         public int MoveCalls;
         public int CopyCalls;
+        public int CreateDirectoryCalls;
 
         public BrowseResultDto Browse(string relativePath)
         {
@@ -1128,5 +1240,6 @@ public class FilesControllerTests
         public void Delete(string relativePath) => DeleteCalls++;
         public void Move(MoveRequest request) => MoveCalls++;
         public void Copy(CopyRequest request) => CopyCalls++;
+        public void CreateDirectory(string relativePath) => CreateDirectoryCalls++;
     }
 }

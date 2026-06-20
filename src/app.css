@@ -197,13 +197,27 @@ body {
    Grows to fill its host's remaining height (flex: 1) and scrolls when the
    table body overflows. `min-height: 0` lets the flex item shrink below its
    content so the scrollbar engages. The table header is made sticky below, so
-   only the body rows scroll. */
+   only the body rows scroll.
+
+   `padding-bottom: var(--browse-row-height)` reserves one row-height of blank
+   space at the bottom of the scroll region. This guarantees there is ALWAYS a
+   clickable blank area below the last row — even when the table is full and
+   scrolled — so a right-click there can open the current-directory context
+   menu (see setupDirContextMenu in dom-builders.ts). A `<tr>` margin cannot
+   do this: table rows ignore `margin` entirely under `border-collapse`, so
+   the space is provided as container padding instead. The blank area is the
+   `.results` element itself (not within the `table`), which is exactly what
+   the contextmenu listener keys on to distinguish blank space from rows. */
 .results {
   flex: 1;
   min-height: 0;
   overflow: auto;
   border: 1px solid #3c3c3c;
   border-radius: 4px;
+  /* One data-row's height (33px = 14px font line-box + 6px*2 td padding,
+   * measured against the app font stack). Keep in sync with the row metrics. */
+  --browse-row-height: 33px;
+  padding-bottom: var(--browse-row-height);
 }
 
 /* ── Table ── */
@@ -306,6 +320,16 @@ body {
   text-align: right;
 }
 
+/* ── Click-to-browse rows ──
+   Folder and parent ("..") rows navigate on a whole-row click (see
+   navigateRowOnClick in dom-builders.ts), so they show a pointer cursor to
+   signal that. File rows keep the default cursor: they have no left-click
+   action, only a right-click context menu. */
+.browse-table tbody tr.folder-row,
+.browse-table tbody tr.parent-row {
+  cursor: pointer;
+}
+
 /* ── Three-dots row menu button ──
    Hidden until the row is hovered or the button's own popup menu is open.
    Uses the same muted-foreground / brighten-on-hover pattern as the dialog
@@ -357,7 +381,25 @@ body {
 /* ── Menu items ──
    Flatten the generic .btn styling inside the dropdown.  The elements
    themselves keep class="btn" so query-* / dataset tests that assert
-   className work unchanged. */
+   className work unchanged.
+
+   `box-sizing: border-box` is REQUIRED here: the generic `.btn` rule does not
+   set it, and unlike <button> (whose UA default is border-box) an <a> keeps
+   the initial content-box.  With `width: 100%` + horizontal padding that made
+   the Download anchor render ~20px wider than the menu and spill out of it.
+   border-box makes width:100% include the padding so every item — anchor or
+   button — lines up exactly with the menu's content box.
+
+   `gap: 8px` spaces each item's leading Bootstrap Icons glyph from its label
+   (the .btn is display:inline-flex, so the icon <i> and the label text node
+   are flex items between which the gap applies).
+
+   `text-decoration: none` overrides the global `a:hover { text-decoration:
+   underline }` rule: the Download item is the only <a> in the menu (Delete /
+   Move / Copy are <button>s, which are unaffected), so without this it alone
+   gained a stray underline on hover. `.row-menu .btn` (specificity 0,2,0)
+   dominates `a:hover` (0,1,1), so a single declaration here covers both the
+   normal and hover states. */
 .row-menu .btn {
   background: none;
   border: none;
@@ -365,7 +407,10 @@ body {
   border-radius: 4px;
   padding: 6px 10px;
   width: 100%;
+  box-sizing: border-box;
+  gap: 8px;
   text-align: left;
+  text-decoration: none;
   justify-content: flex-start;
 }
 .row-menu .btn:hover {

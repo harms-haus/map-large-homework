@@ -57,3 +57,61 @@ export async function handleUpload(): Promise<void> {
     getStatus().textContent = `Uploaded ${succeeded} file(s); failed: ${failed.join(', ')}`;
   }
 }
+
+/**
+ * Open the native file picker and upload every selected file into `dirPath`
+ * (an arbitrary directory, NOT necessarily the current route) — used by the
+ * folder-row "Upload" and the current-directory context menus.
+ *
+ * This mirrors {@link handleUpload}'s per-file loop and failure surfacing but
+ * uses a self-contained, transient `<input type="file" multiple>` instead of
+ * the toolbar's shared upload input (whose `change` handler is hardwired to
+ * the current route path). The transient input is appended hidden, clicked
+ * (within the menu-item click's user gesture so the picker is allowed to
+ * open), awaited until either `change` (files chosen) or `cancel` (dismissed),
+ * then removed — so a cancel resolves cleanly with no upload and no leak.
+ */
+export async function pickAndUploadInto(dirPath: string): Promise<void> {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  input.style.display = 'none';
+  document.body.append(input);
+
+  const files = await new Promise<File[]>((resolve) => {
+    let settled = false;
+    const finish = (list: File[]): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(list);
+    };
+    input.addEventListener('change', () => {
+      finish(input.files ? Array.from(input.files) : []);
+    });
+    // `cancel` fires when the user dismisses the picker without choosing —
+    // resolve with an empty list so the input is removed and no upload runs.
+    input.addEventListener('cancel', () => finish([]));
+    input.click();
+  });
+  input.remove();
+
+  if (files.length === 0) {
+    return;
+  }
+  const path = normalizeRelativePath(dirPath);
+  const failed: string[] = [];
+  for (const file of files) {
+    try {
+      await getApi().upload(path, file);
+    } catch {
+      failed.push(file.name);
+    }
+  }
+  await rerender();
+  if (failed.length > 0) {
+    const succeeded = files.length - failed.length;
+    getStatus().textContent = `Uploaded ${succeeded} file(s); failed: ${failed.join(', ')}`;
+  }
+}

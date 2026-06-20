@@ -10,7 +10,13 @@
  */
 import type { BrowseResult } from '../api.js';
 import { formatBytes } from '../format.js';
-import { buildTable, makeBrowseRow, makeParentRow, renderBreadcrumb } from './dom-builders.js';
+import {
+  buildTable,
+  makeBrowseRow,
+  makeParentRow,
+  renderBreadcrumb,
+  setupDirContextMenu,
+} from './dom-builders.js';
 import { getResults, getStatus } from './context.js';
 
 export function renderBrowse(result: BrowseResult): void {
@@ -40,4 +46,10 @@ export function renderBrowse(result: BrowseResult): void {
   }
 
   resultsEl.append(table);
+
+  // Mount the current-directory context menu (right-click on blank space) and
+  // wire its listener. Rebuilds the menu each render for the current path; the
+  // listener attaches once. Must run AFTER the table is appended so the menu
+  // is a later sibling (document order) than the row menus inside the table.
+  setupDirContextMenu(resultsEl, result.path);
 }

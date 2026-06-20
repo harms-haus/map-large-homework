@@ -325,4 +325,15 @@ describe('src/app.css — row menu items (.row-menu .btn)', () => {
     expect(hover, 'a .row-menu .btn:hover rule must exist').not.toBeNull();
     expect(/background\s*:\s*#3a3d41/.test(hover!), 'hover background #3a3d41').toBe(true);
   });
+
+  it('suppresses the global a:hover underline so the Download anchor does not get a stray underline', () => {
+    // The Download menu item is the only <a> in the menu (Delete/Move/Copy
+    // are <button>s), so the global `a:hover { text-decoration: underline }`
+    // rule singled it out for a stray underline on hover. `.row-menu .btn`
+    // (specificity 0,2,0) dominates `a:hover` (0,1,1), so declaring
+    // text-decoration:none on the base item rule covers both states and keeps
+    // the Download item visually consistent with the buttons.
+    const item = ruleDeclarations(/\.row-menu \.btn/)!;
+    expect(/text-decoration\s*:\s*none/.test(item), 'text-decoration:none override').toBe(true);
+  });
 });
