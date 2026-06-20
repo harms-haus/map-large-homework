@@ -1,28 +1,56 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
+using TestProject.Configuration;
 using TestProject.Models;
 
 namespace TestProject.Services;
 
 /// <summary>
 /// Path-safe implementation of <see cref="IFileService"/> that confines every
-/// operation to a single home directory computed once at construction time.
-/// Any relative path that normalizes to a location outside the home root causes
-/// an <see cref="ArgumentException"/> to be thrown before any disk access.
+/// operation to a single home directory. The root path is computed at
+/// construction time, but the directory itself is created lazily on first use
+/// so that disk I/O (and any failure it might raise) is decoupled from DI
+/// resolution. Any relative path that normalizes to a location outside the
+/// home root causes an <see cref="ArgumentException"/> to be thrown before any
+/// disk access.
 /// </summary>
 public sealed class FileService : IFileService
 {
     private const int MaxSearchResults = 500;
 
-    private readonly string _root;
+    /// <summary>
+    /// Maximum recursion depth permitted for <see cref="CopyDirectory"/>. A
+    /// copy that recurses this many levels deep is treated as a pathological or
+    /// self-referential tree and aborted with <see cref="IOException"/> to
+    /// guard against stack overflow.
+    /// </summary>
+    private const int MaxCopyDepth = 32;
+
+    private readonly Lazy<string> _rootLazy;
 
     public FileService(IOptions<FileServiceOptions> options, IWebHostEnvironment env)
     {
-        var root = Path.GetFullPath(Path.Combine(env.ContentRootPath, options.Value.HomeDirectory ?? "Home"));
-        Directory.CreateDirectory(root);
-        _root = root;
+        // Only compute the resolved path here. Creating the directory (and
+        // surfacing any I/O failure) is deferred to first use via the Lazy,
+        // which is thread-safe so the directory is materialized exactly once
+        // even under concurrent first-access.
+        _rootLazy = new Lazy<string>(
+            () =>
+            {
+                var root = Path.GetFullPath(Path.Combine(
+                    env.ContentRootPath,
+                    options.Value.HomeDirectory ?? "Home"));
+                Directory.CreateDirectory(root);
+                return root;
+            },
+            LazyThreadSafetyMode.ExecutionAndPublication);
     }
+
+    /// <summary>
+    /// The resolved home root, materializing it on first access.
+    /// </summary>
+    private string Root => _rootLazy.Value;
 
     // =====================================================================
     // IFileService
@@ -34,31 +62,34 @@ public sealed class FileService : IFileService
         var full = SafeResolve(relativePath);
         var relative = ToRelative(full);
 
-        var directoryPaths = Directory.GetDirectories(full);
-        var filePaths = Directory.GetFiles(full);
+        // Enumerate files and directories in a single pass, avoiding the
+        // double traversal (and double array allocation) of separate
+        // GetDirectories/GetFiles calls. Name, FullName, and LastWriteTimeUtc
+        // are exposed by the shared FileSystemInfo base; only the file size
+        // requires the FileInfo cast.
+        var entries = new List<FileEntryDto>();
 
-        var entries = new List<FileEntryDto>(directoryPaths.Length + filePaths.Length);
-
-        foreach (var dir in directoryPaths)
+        foreach (var info in new DirectoryInfo(full).EnumerateFileSystemInfos())
         {
-            var info = new DirectoryInfo(dir);
-            entries.Add(new FileEntryDto(
-                Name: info.Name,
-                Path: ToRelative(dir),
-                IsDirectory: true,
-                Size: 0,
-                LastModified: info.LastWriteTimeUtc));
-        }
-
-        foreach (var file in filePaths)
-        {
-            var info = new FileInfo(file);
-            entries.Add(new FileEntryDto(
-                Name: info.Name,
-                Path: ToRelative(file),
-                IsDirectory: false,
-                Size: info.Length,
-                LastModified: info.LastWriteTimeUtc));
+            if (info is DirectoryInfo directoryInfo)
+            {
+                entries.Add(new FileEntryDto(
+                    Name: directoryInfo.Name,
+                    Path: ToRelative(directoryInfo.FullName),
+                    IsDirectory: true,
+                    Size: 0,
+                    LastModified: directoryInfo.LastWriteTimeUtc));
+            }
+            else
+            {
+                var fileInfo = (FileInfo)info;
+                entries.Add(new FileEntryDto(
+                    Name: fileInfo.Name,
+                    Path: ToRelative(fileInfo.FullName),
+                    IsDirectory: false,
+                    Size: fileInfo.Length,
+                    LastModified: fileInfo.LastWriteTimeUtc));
+            }
         }
 
         // Directories first, then files, each group sorted by name (OrdinalIgnoreCase).
@@ -174,18 +205,40 @@ public sealed class FileService : IFileService
         await file.CopyToAsync(fs);
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Deletes the file or directory (recursively) at <paramref name="relativePath"/>.
+    /// Deleting a non-existent path succeeds silently — the post-condition
+    /// (entry gone) is already met. This is achieved without an up-front
+    /// <c>Exists</c> check, eliminating the check-then-act (TOCTOU) window in
+    /// which a concurrent delete could cause a spurious
+    /// <see cref="DirectoryNotFoundException"/>: the delete is attempted, and
+    /// a missing-path outcome is treated as success rather than a failure.
+    /// </summary>
     public void Delete(string relativePath)
     {
         var path = SafeResolve(relativePath);
 
-        if (Directory.Exists(path))
+        try
         {
-            Directory.Delete(path, recursive: true);
+            try
+            {
+                // Attempt the directory delete first. On a real file (or a
+                // missing path) this throws DirectoryNotFoundException, which
+                // is the signal to fall through to the file form.
+                Directory.Delete(path, recursive: true);
+            }
+            catch (DirectoryNotFoundException)
+            {
+                // Not a directory (or already gone). File.Delete is itself a
+                // no-op when the target file is absent.
+                File.Delete(path);
+            }
         }
-        else
+        catch (DirectoryNotFoundException)
         {
-            File.Delete(path);
+            // Both the directory and file forms reported the path (or an
+            // ancestor) as absent. The post-condition — the entry no longer
+            // exists — is satisfied, so treat this as success.
         }
     }
 
@@ -195,7 +248,19 @@ public sealed class FileService : IFileService
         var source = SafeResolve(request.SourcePath);
         var destination = SafeResolve(request.DestinationPath);
 
-        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        // Path.GetDirectoryName returns null when the destination is a
+        // filesystem root (e.g. the home root itself). Moving an entry onto a
+        // filesystem root is nonsensical within the home-directory sandbox, so
+        // surface a clear error rather than letting
+        // Directory.CreateDirectory(null) crash with an opaque
+        // ArgumentNullException.
+        var parent = Path.GetDirectoryName(destination);
+        if (string.IsNullOrEmpty(parent))
+        {
+            throw new ArgumentException("Invalid destination path", nameof(request));
+        }
+
+        Directory.CreateDirectory(parent);
 
         if (Directory.Exists(source))
         {
@@ -215,7 +280,7 @@ public sealed class FileService : IFileService
 
         if (Directory.Exists(source))
         {
-            CopyDirectory(source, destination);
+            CopyDirectory(source, destination, depth: 0);
         }
         else
         {
@@ -235,15 +300,17 @@ public sealed class FileService : IFileService
     /// </summary>
     private string SafeResolve(string relativePath)
     {
+        var root = Root;
+
         if (string.IsNullOrWhiteSpace(relativePath))
         {
-            return _root;
+            return root;
         }
 
-        var full = Path.GetFullPath(Path.Combine(_root, relativePath));
+        var full = Path.GetFullPath(Path.Combine(root, relativePath));
 
-        var isRoot = string.Equals(full, _root, StringComparison.Ordinal);
-        var isInsideRoot = full.StartsWith(_root + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+        var isRoot = string.Equals(full, root, StringComparison.Ordinal);
+        var isInsideRoot = full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal);
 
         if (!isRoot && !isInsideRoot)
         {
@@ -259,8 +326,9 @@ public sealed class FileService : IFileService
     /// </summary>
     private string ToRelative(string full)
     {
+        var root = Root;
         return full
-            .Substring(_root.Length)
+            .Substring(root.Length)
             .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             .Replace('\\', '/');
     }
@@ -277,13 +345,7 @@ public sealed class FileService : IFileService
             return null;
         }
 
-        var separatorIndex = relative.LastIndexOf('/');
-        if (separatorIndex < 0)
-        {
-            return string.Empty;
-        }
-
-        return relative.Substring(0, separatorIndex);
+        return Path.GetDirectoryName(relative)?.Replace('\\', '/') ?? string.Empty;
     }
 
     /// <summary>
@@ -303,10 +365,23 @@ public sealed class FileService : IFileService
     /// <summary>
     /// Recursively copies a directory tree, preserving structure. Existing
     /// files are not overwritten, matching the no-overwrite contract of
-    /// <see cref="File.Copy(string, string, bool)"/>.
+    /// <see cref="File.Copy(string, string, bool)"/>. The recursion is bounded
+    /// by <see cref="MaxCopyDepth"/>: each nested directory increments
+    /// <paramref name="depth"/> by one, and once it reaches the limit the copy
+    /// is aborted with <see cref="IOException"/> to prevent stack overflow on
+    /// pathological or self-referential trees.
     /// </summary>
-    private static void CopyDirectory(string source, string destination)
+    /// <param name="source">Absolute path to the directory to copy from.</param>
+    /// <param name="destination">Absolute path to the directory to copy into.</param>
+    /// <param name="depth">Current recursion depth, seeded at zero by
+    /// <see cref="Copy"/>.</param>
+    private static void CopyDirectory(string source, string destination, int depth)
     {
+        if (depth >= MaxCopyDepth)
+        {
+            throw new IOException("Directory copy depth limit exceeded (possible cycle)");
+        }
+
         Directory.CreateDirectory(destination);
 
         foreach (var file in Directory.GetFiles(source))
@@ -316,7 +391,7 @@ public sealed class FileService : IFileService
 
         foreach (var directory in Directory.GetDirectories(source))
         {
-            CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)));
+            CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)), depth + 1);
         }
     }
 }

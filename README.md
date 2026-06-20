@@ -33,7 +33,12 @@ The server's home directory (where files are stored) is configurable via the `Fi
 - **appsettings.json**: set `FileService.HomeDirectory` (default is `"Home"`).
 - **Environment variable**: set `FileService__HomeDirectory` (double underscore).
 
-Relative paths resolve under the app content root. The folder is created automatically on startup.
+Relative paths resolve under the app content root. The folder is created automatically on first use (lazily, the first time a file-system operation targets it), so a misconfigured path surfaces on the first request rather than at startup.
+
+## Limits
+
+- **Search results are capped at 500.** Search stops collecting matches once it reaches 500 results, so a broad query may return fewer entries than actually exist. Narrow the query or scope it to a subfolder to see additional matches.
+- **Directory copy is limited to 32 levels of nesting.** Copying a tree nested more than 32 levels deep aborts with an IOException whose message is `Directory copy depth limit exceeded (possible cycle)`, to guard against stack overflow on pathological or self-referential directory trees.
 
 ## Deep Linking
 

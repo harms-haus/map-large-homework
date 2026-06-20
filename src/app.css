@@ -170,10 +170,7 @@ body {
   color: #e6e6e6;
   text-decoration: none;
 }
-.breadcrumb .separator {
-  color: #3c3c3c;
-  margin: 0 2px;
-}
+
 
 /* Search input */
 .toolbar input[type="search"],
@@ -197,25 +194,7 @@ body {
   border-color: #6aa6ff;
 }
 
-/* Upload label styled as button */
-.toolbar label.upload-btn {
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 12px;
-  cursor: pointer;
-  background: #3a3d41;
-  border: none;
-  color: inherit;
-  border-radius: 4px;
-  font-size: 13px;
-  white-space: nowrap;
-}
-.toolbar label.upload-btn:hover {
-  background: #45494d;
-}
-.toolbar label.upload-btn input[type="file"] {
-  display: none;
-}
+
 
 /* ── Results container (scrollable) ──
    Grows to fill its host's remaining height (flex: 1) and scrolls when the
@@ -255,10 +234,7 @@ body {
   background: #2d2d30;
 }
 
-/* Folder rows – slightly heavier weight */
-.results-table .folder-row td {
-  font-weight: 600;
-}
+
 
 /* ── Small action buttons ── */
 .btn {

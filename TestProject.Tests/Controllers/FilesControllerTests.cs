@@ -1,13 +1,11 @@
 using System.Reflection;
-using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using TestProject.Controllers;
 using TestProject.Models;
 using TestProject.Services;
+using TestProject.Tests.TestHelpers;
 using Xunit;
 
 namespace TestProject.Tests.Controllers;
@@ -35,23 +33,28 @@ public class FilesControllerTests
     /// </summary>
     public static IEnumerable<object[]> CaughtExceptions()
     {
+        // The five exception types the controller documents and catches by
+        // name. Each must map to a 400 carrying its Message.
         yield return new object[] { new ArgumentException("arg-message") };
         yield return new object[] { new UnauthorizedAccessException("unauth-message") };
         yield return new object[] { new DirectoryNotFoundException("dir-message") };
         yield return new object[] { new FileNotFoundException("file-message") };
         yield return new object[] { new IOException("io-message") };
+
+        // Subtypes that must be caught by virtue of inheritance. The catch
+        // list names base types (ArgumentException, IOException), so derived
+        // exceptions must ALSO resolve to 400. A refactor that switched to
+        // exact-type matching (e.g. `switch (ex.GetType())`) would let these
+        // leak through as unhandled — these cases pin the inheritance-based
+        // contract that the extracted helper must preserve.
+        yield return new object[] { new ArgumentNullException("p", "argnull-message") };
+        yield return new object[] { new ArgumentOutOfRangeException("p", "argoor-message") };
+        yield return new object[] { new PathTooLongException("pathtoolong-message") };
     }
 
     private static FilesController CreateController(FakeFileService service)
     {
-        return new FilesController(service, NullLogger<FilesController>.Instance);
-    }
-
-    private static IFormFile CreateFormFile(string fileName, string content)
-    {
-        var bytes = Encoding.UTF8.GetBytes(content);
-        var stream = new MemoryStream(bytes);
-        return new FormFile(stream, 0, bytes.Length, "file", fileName);
+        return new FilesController(service);
     }
 
     private static object? GetProperty(object instance, string name)
@@ -59,6 +62,20 @@ public class FilesControllerTests
         var property = instance.GetType().GetProperty(name);
         Assert.NotNull(property);
         return property!.GetValue(instance);
+    }
+
+    /// <summary>
+    /// Asserts that <paramref name="value"/> exposes exactly one public
+    /// property, named <paramref name="expectedName"/>, and returns it for
+    /// further type/value assertions. Used to pin the *exact* payload shape
+    /// of the Ok/BadRequest anonymous bodies so a refactor cannot silently
+    /// add, rename, drop, or retyped a field.
+    /// </summary>
+    private static PropertyInfo AssertSingleProperty(object value, string expectedName)
+    {
+        var property = Assert.Single(value.GetType().GetProperties());
+        Assert.Equal(expectedName, property.Name);
+        return property;
     }
 
     // =====================================================================
@@ -196,7 +213,7 @@ public class FilesControllerTests
     {
         var fake = new FakeFileService();
         var controller = CreateController(fake);
-        var file = CreateFormFile("upload.txt", "payload");
+        var file = FormFileFactory.CreateFormFile("upload.txt", "payload");
 
         await controller.Upload("docs", file);
 
@@ -211,7 +228,7 @@ public class FilesControllerTests
     {
         var fake = new FakeFileService();
         var controller = CreateController(fake);
-        var file = CreateFormFile("upload.txt", "payload");
+        var file = FormFileFactory.CreateFormFile("upload.txt", "payload");
 
         await controller.Upload(path, file);
 
@@ -223,7 +240,7 @@ public class FilesControllerTests
     {
         var fake = new FakeFileService();
         var controller = CreateController(fake);
-        var file = CreateFormFile("upload.txt", "payload");
+        var file = FormFileFactory.CreateFormFile("upload.txt", "payload");
 
         var result = await controller.Upload(string.Empty, file);
 
@@ -237,7 +254,7 @@ public class FilesControllerTests
     {
         var fake = new FakeFileService();
         var controller = CreateController(fake);
-        var file = CreateFormFile("upload.txt", "payload");
+        var file = FormFileFactory.CreateFormFile("upload.txt", "payload");
 
         var result = await controller.Upload(null, file);
 
@@ -250,7 +267,7 @@ public class FilesControllerTests
     {
         var fake = new FakeFileService();
         var controller = CreateController(fake);
-        var file = CreateFormFile("report.txt", "payload");
+        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
 
         var result = await controller.Upload("docs", file);
 
@@ -264,13 +281,178 @@ public class FilesControllerTests
     {
         var fake = new FakeFileService { UploadException = ex };
         var controller = CreateController(fake);
-        var file = CreateFormFile("upload.txt", "payload");
+        var file = FormFileFactory.CreateFormFile("upload.txt", "payload");
 
         var result = await controller.Upload("docs", file);
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
         Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+    }
+
+    // =====================================================================
+    // Upload response path normalization
+    //
+    // The Upload endpoint joins the directory `path` query parameter with the
+    // uploaded file name for its response. A client may pass a non-canonical
+    // path (backslashes, leading/trailing slashes, '.'/'..' segments, repeated
+    // slashes); the response must normalize those into a clean forward-slash
+    // relative path that is consistent with the rest of the API and with the
+    // frontend's normalizeRelativePath (src/format.ts). These tests pin that
+    // contract for already-canonical and non-canonical inputs, and verify the
+    // service still receives the raw query value (only the response is
+    // normalized — the service's own SafeResolve sandboxes the path).
+    // =====================================================================
+
+    [Theory]
+    [InlineData(null, "report.txt")]
+    [InlineData("", "report.txt")]
+    [InlineData("docs", "docs/report.txt")]
+    [InlineData("docs/sub", "docs/sub/report.txt")]
+    [InlineData("a/b/c", "a/b/c/report.txt")]
+    public async Task Upload_ResponsePath_IsAlreadyCanonical_ForCleanInputs(string? path, string expected)
+    {
+        // Behavior must be unchanged for inputs that are already canonical.
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
+
+        var result = await controller.Upload(path, file);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(StatusCodes.Status200OK, ok.StatusCode);
+        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
+    }
+
+    [Theory]
+    [InlineData("docs\\sub", "docs/sub/report.txt")]
+    [InlineData("docs\\sub\\deep", "docs/sub/deep/report.txt")]
+    [InlineData("\\docs", "docs/report.txt")]
+    public async Task Upload_ResponsePath_ReplacesBackslashesWithForwardSlashes(string path, string expected)
+    {
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
+
+        var result = await controller.Upload(path, file);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
+    }
+
+    [Theory]
+    [InlineData("/docs", "docs/report.txt")]
+    [InlineData("docs/", "docs/report.txt")]
+    [InlineData("/docs/", "docs/report.txt")]
+    [InlineData("/docs/sub/", "docs/sub/report.txt")]
+    public async Task Upload_ResponsePath_TrimsLeadingAndTrailingSlashes(string path, string expected)
+    {
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
+
+        var result = await controller.Upload(path, file);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
+    }
+
+    [Theory]
+    [InlineData("docs//sub", "docs/sub/report.txt")]
+    [InlineData("docs///sub", "docs/sub/report.txt")]
+    [InlineData("//docs//sub//", "docs/sub/report.txt")]
+    public async Task Upload_ResponsePath_CollapsesRepeatedSlashes(string path, string expected)
+    {
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
+
+        var result = await controller.Upload(path, file);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
+    }
+
+    [Theory]
+    [InlineData("./docs", "docs/report.txt")]
+    [InlineData("docs/./sub", "docs/sub/report.txt")]
+    [InlineData("docs/sub/.", "docs/sub/report.txt")]
+    [InlineData("../docs", "docs/report.txt")]
+    [InlineData("docs/../sub", "docs/sub/report.txt")]
+    public async Task Upload_ResponsePath_DropsDotAndDotDotSegments(string path, string expected)
+    {
+        // '.' and '..' are filtered out (NOT resolved against the parent),
+        // matching the frontend's normalizeRelativePath semantics.
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
+
+        var result = await controller.Upload(path, file);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
+    }
+
+    [Theory]
+    [InlineData(".", "report.txt")]
+    [InlineData("..", "report.txt")]
+    [InlineData("/", "report.txt")]
+    [InlineData("\\", "report.txt")]
+    [InlineData("///", "report.txt")]
+    [InlineData("./", "report.txt")]
+    [InlineData("../..", "report.txt")]
+    [InlineData("/./../", "report.txt")]
+    public async Task Upload_ResponsePath_ReturnsJustFileName_WhenPathNormalizesToEmpty(string path, string expected)
+    {
+        // When the directory path collapses to nothing after normalization, the
+        // response must be just the file name (same shape as a null/empty path).
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
+
+        var result = await controller.Upload(path, file);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
+    }
+
+    [Fact]
+    public async Task Upload_ResponsePath_NormalizesAllRulesAtOnce_ForMixedInput()
+    {
+        // Exercises every rule simultaneously: backslash, leading slash,
+        // trailing slash, repeated slash, '.' and '..' segments.
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
+
+        var result = await controller.Upload("/./docs\\..//sub/", file);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(StatusCodes.Status200OK, ok.StatusCode);
+        // '/./docs\..//sub/' -> replace '\' -> '/./docs/..//sub/' ->
+        // split -> ['', '.', 'docs', '..', '', 'sub', ''] ->
+        // filter -> ['docs', 'sub'] -> join -> 'docs/sub'
+        Assert.Equal("docs/sub/report.txt", GetProperty(ok.Value!, "path"));
+    }
+
+    [Theory]
+    [InlineData("docs\\sub")]
+    [InlineData("/docs/")]
+    [InlineData("./docs")]
+    [InlineData("docs/../sub")]
+    [InlineData("//docs//sub//")]
+    public async Task Upload_PassesRawPathToService_EvenWhenNonCanonical(string path)
+    {
+        // The service call must NOT be normalized: it still receives the raw
+        // query value so its own SafeResolve can sandbox the path. Only the
+        // HTTP response is normalized.
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
+
+        await controller.Upload(path, file);
+
+        Assert.Equal(path, fake.UploadDirPath);
     }
 
     // =====================================================================
@@ -333,6 +515,128 @@ public class FilesControllerTests
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
         Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+    }
+
+    // The Download endpoint derives the response content type from the
+    // extension of the *resolved* full path via a FileExtensionContentTypeProvider.
+    // The provider's mapping is immutable and the controller must not alter it,
+    // so the following characterization tests pin down the exact content-type
+    // resolution (known extensions, case-insensitivity, the octet-stream
+    // fallback and determinism across calls) that any caching refactor must
+    // preserve bit-for-bit.
+
+    [Theory]
+    [InlineData(".txt", "text/plain")]
+    [InlineData(".html", "text/html")]
+    [InlineData(".css", "text/css")]
+    [InlineData(".json", "application/json")]
+    [InlineData(".png", "image/png")]
+    [InlineData(".jpg", "image/jpeg")]
+    [InlineData(".gif", "image/gif")]
+    [InlineData(".pdf", "application/pdf")]
+    [InlineData(".svg", "image/svg+xml")]
+    [InlineData(".csv", "text/csv")]
+    public void Download_ReturnsExpectedContentType_ForKnownExtensions(
+        string extension, string expectedContentType)
+    {
+        // The content type is derived from the extension of the *resolved*
+        // path, not the inbound relative path.
+        var resolved = Path.Combine(Path.GetTempPath(), "file" + extension);
+        var fake = new FakeFileService { ResolvedPath = resolved };
+        var controller = CreateController(fake);
+
+        var result = controller.Download("file" + extension);
+
+        var physical = Assert.IsType<PhysicalFileResult>(result);
+        Assert.Equal(expectedContentType, physical.ContentType);
+    }
+
+    [Theory]
+    [InlineData(".TXT", "text/plain")]
+    [InlineData(".PDF", "application/pdf")]
+    [InlineData(".PnG", "image/png")]
+    public void Download_ResolvesContentTypeCaseInsensitively(
+        string extension, string expectedContentType)
+    {
+        // FileExtensionContentTypeProvider matches extensions
+        // case-insensitively by default; the controller must preserve that.
+        var resolved = Path.Combine(Path.GetTempPath(), "FILE" + extension);
+        var fake = new FakeFileService { ResolvedPath = resolved };
+        var controller = CreateController(fake);
+
+        var result = controller.Download("FILE" + extension);
+
+        var physical = Assert.IsType<PhysicalFileResult>(result);
+        Assert.Equal(expectedContentType, physical.ContentType);
+    }
+
+    [Theory]
+    [InlineData(".zzzznotmapped")]
+    [InlineData(".unknownext")]
+    [InlineData(".xyz123abc")]
+    public void Download_UsesOctetStream_ForVariousUnknownExtensions(string extension)
+    {
+        // Any extension absent from the default map must fall back to the
+        // documented application/octet-stream default.
+        var resolved = Path.Combine(Path.GetTempPath(), "blob" + extension);
+        var fake = new FakeFileService { ResolvedPath = resolved };
+        var controller = CreateController(fake);
+
+        var result = controller.Download("blob" + extension);
+
+        var physical = Assert.IsType<PhysicalFileResult>(result);
+        Assert.Equal("application/octet-stream", physical.ContentType);
+    }
+
+    [Fact]
+    public void Download_ReturnsConsistentContentType_AcrossRepeatedCalls()
+    {
+        // A cached/shared provider must yield identical results on every call;
+        // repeated resolution of the same extension must not drift (guards
+        // against any accidental introduction of shared mutable state).
+        var resolved = Path.Combine(Path.GetTempPath(), "report.pdf");
+        var fake = new FakeFileService { ResolvedPath = resolved };
+        var controller = CreateController(fake);
+
+        var first = Assert.IsType<PhysicalFileResult>(controller.Download("report.pdf"));
+        var second = Assert.IsType<PhysicalFileResult>(controller.Download("report.pdf"));
+
+        Assert.Equal("application/pdf", first.ContentType);
+        Assert.Equal(first.ContentType, second.ContentType);
+    }
+
+    [Fact]
+    public void Download_ReturnsConsistentContentType_AcrossControllerInstances()
+    {
+        // Content-type derivation must depend only on the file extension, not
+        // on which controller instance serves the request.
+        var resolved = Path.Combine(Path.GetTempPath(), "image.png");
+        var controllerA = CreateController(new FakeFileService { ResolvedPath = resolved });
+        var controllerB = CreateController(new FakeFileService { ResolvedPath = resolved });
+
+        var fromA = Assert.IsType<PhysicalFileResult>(controllerA.Download("image.png"));
+        var fromB = Assert.IsType<PhysicalFileResult>(controllerB.Download("image.png"));
+
+        Assert.Equal("image/png", fromA.ContentType);
+        Assert.Equal(fromA.ContentType, fromB.ContentType);
+    }
+
+    [Fact]
+    public void Download_DerivesContentTypeFromExtensionInResolvedPath_AndSetsLeafFileName()
+    {
+        // When the resolved full path contains subdirectories, the content
+        // type is still derived from the leaf extension and the download name
+        // is the leaf file name only (Path.GetFileName of the full path).
+        var resolved = Path.Combine(Path.GetTempPath(), "sub", "dir", "data.json");
+        var fake = new FakeFileService { ResolvedPath = resolved };
+        var controller = CreateController(fake);
+
+        var result = controller.Download("sub/dir/data.json");
+
+        var physical = Assert.IsType<PhysicalFileResult>(result);
+        Assert.Equal("application/json", physical.ContentType);
+        Assert.Equal(resolved, physical.FileName);
+        Assert.Equal("data.json", physical.FileDownloadName);
     }
 
     // =====================================================================
@@ -475,84 +779,341 @@ public class FilesControllerTests
 
         Assert.Throws<InvalidOperationException>(() => controller.Delete("any"));
     }
-}
 
-/// <summary>
-/// Recording double for <see cref="IFileService"/>. Each method stashes the
-/// arguments it was called with and either returns a configurable value or
-/// throws a configurable exception, giving each test full control over the
-/// service's behavior while keeping the double trivially inspectable.
-/// </summary>
-internal sealed class FakeFileService : IFileService
-{
-    // ----- recorded inputs -----
-    public string? BrowsePath;
-    public string? SearchQuery;
-    public string? SearchPath;
-    public string? ResolvePath;
-    public string? UploadDirPath;
-    public IFormFile? UploadFile;
-    public string? DeletePath;
-    public MoveRequest? MoveRequest;
-    public CopyRequest? CopyRequest;
+    // =====================================================================
+    // Non-translated exceptions must propagate from EVERY endpoint.
+    //
+    // The refactor extracts the per-endpoint try/catch into a single shared
+    // helper. The single most dangerous failure mode for that change is the
+    // helper accidentally widening the catch list (a stray `catch (Exception
+    // ex)` or `when (...)` filter, or catching a base type too eagerly) —
+    // which would silently turn every fault into a 400. Only Delete is
+    // covered above; the tests below pin the same "unhandled exception
+    // bubbles out" guarantee for the remaining six endpoints.
+    //
+    // The Upload case is async on purpose: if the helper fails to await the
+    // body and instead unwraps via `.Result`/`.Wait()`, the throw would
+    // surface as `AggregateException` rather than the original
+    // `InvalidOperationException`, failing the assertion.
+    // =====================================================================
 
-    // ----- configurable outputs / faults -----
-    public BrowseResultDto BrowseResult = new(string.Empty, null, Array.Empty<FileEntryDto>(), 0, 0, 0L);
-    public SearchResultDto SearchResult = new(string.Empty, string.Empty, Array.Empty<FileEntryDto>());
-    public string ResolvedPath = string.Empty;
-    public Exception? BrowseException;
-    public Exception? SearchException;
-    public Exception? ResolveException;
-    public Exception? UploadException;
-    public Exception? DeleteException;
-    public Exception? MoveException;
-    public Exception? CopyException;
-
-    public BrowseResultDto Browse(string relativePath)
+    [Fact]
+    public void Browse_DoesNotSwallowUnhandledExceptions()
     {
-        BrowsePath = relativePath;
-        if (BrowseException is not null) throw BrowseException;
-        return BrowseResult;
+        var fake = new FakeFileService { BrowseException = new InvalidOperationException("boom") };
+        var controller = CreateController(fake);
+
+        Assert.Throws<InvalidOperationException>(() => controller.Browse("any"));
     }
 
-    public SearchResultDto Search(string query, string relativePath)
+    [Fact]
+    public void Search_DoesNotSwallowUnhandledExceptions()
     {
-        SearchQuery = query;
-        SearchPath = relativePath;
-        if (SearchException is not null) throw SearchException;
-        return SearchResult;
+        var fake = new FakeFileService { SearchException = new InvalidOperationException("boom") };
+        var controller = CreateController(fake);
+
+        Assert.Throws<InvalidOperationException>(() => controller.Search("q", "p"));
     }
 
-    public string ResolveFullPath(string relativePath)
+    [Fact]
+    public async Task Upload_DoesNotSwallowUnhandledExceptions()
     {
-        ResolvePath = relativePath;
-        if (ResolveException is not null) throw ResolveException;
-        return ResolvedPath;
+        var fake = new FakeFileService { UploadException = new InvalidOperationException("boom") };
+        var controller = CreateController(fake);
+        var file = FormFileFactory.CreateFormFile("upload.txt", "payload");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => controller.Upload("docs", file));
     }
 
-    public Task UploadAsync(string relativeDirPath, IFormFile file)
+    [Fact]
+    public void Download_DoesNotSwallowUnhandledExceptions()
     {
-        UploadDirPath = relativeDirPath;
-        UploadFile = file;
-        if (UploadException is not null) throw UploadException;
-        return Task.CompletedTask;
+        var fake = new FakeFileService { ResolveException = new InvalidOperationException("boom") };
+        var controller = CreateController(fake);
+
+        Assert.Throws<InvalidOperationException>(() => controller.Download("any"));
     }
 
-    public void Delete(string relativePath)
+    [Fact]
+    public void Move_DoesNotSwallowUnhandledExceptions()
     {
-        DeletePath = relativePath;
-        if (DeleteException is not null) throw DeleteException;
+        var fake = new FakeFileService { MoveException = new InvalidOperationException("boom") };
+        var controller = CreateController(fake);
+
+        Assert.Throws<InvalidOperationException>(() => controller.Move(new MoveRequest("a", "b")));
     }
 
-    public void Move(MoveRequest request)
+    [Fact]
+    public void Copy_DoesNotSwallowUnhandledExceptions()
     {
-        MoveRequest = request;
-        if (MoveException is not null) throw MoveException;
+        var fake = new FakeFileService { CopyException = new InvalidOperationException("boom") };
+        var controller = CreateController(fake);
+
+        Assert.Throws<InvalidOperationException>(() => controller.Copy(new CopyRequest("a", "b")));
     }
 
-    public void Copy(CopyRequest request)
+    // =====================================================================
+    // Error payload shape: each translated exception must yield a 400 whose
+    // body is *exactly* `{ error: <message> }` — a single property, no more.
+    // The per-endpoint tests above read `GetProperty(value, "error")` to
+    // check the value, but never assert that `error` is the *only* field, so
+    // a refactor that swapped in ProblemDetails or appended extra metadata
+    // would slip past them. These pin the exact shape.
+    // =====================================================================
+
+    [Fact]
+    public void BadRequest_PayloadHasExactlyOneStringPropertyNamedError()
     {
-        CopyRequest = request;
-        if (CopyException is not null) throw CopyException;
+        var fake = new FakeFileService { DeleteException = new IOException("io-message") };
+        var controller = CreateController(fake);
+
+        var result = controller.Delete("any");
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.NotNull(badRequest.Value);
+        var property = AssertSingleProperty(badRequest.Value!, "error");
+        Assert.Equal(typeof(string), property.PropertyType);
+        Assert.Equal("io-message", property.GetValue(badRequest.Value));
+    }
+
+    [Theory]
+    [InlineData("simple message")]
+    [InlineData("")]
+    [InlineData("message with 'quotes' and \"double quotes\"")]
+    [InlineData("multi\nline\nmessage")]
+    [InlineData("Unicode: café ☕ 日本語")]
+    [InlineData("<script>alert('xss')</script>")]
+    [InlineData("path with /slashes/ and\\backslashes")]
+    public void BadRequest_PreservesExceptionMessageVerbatim(string message)
+    {
+        // The exception message must be copied verbatim into the response —
+        // no trimming, HTML-encoding, JSON-escaping at the controller layer,
+        // or truncation. The serializer handles encoding downstream.
+        var fake = new FakeFileService { DeleteException = new IOException(message) };
+        var controller = CreateController(fake);
+
+        var result = controller.Delete("any");
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(message, GetProperty(badRequest.Value!, "error"));
+    }
+
+    [Theory]
+    [MemberData(nameof(CaughtExceptions))]
+    public void BadRequest_AlwaysReturns400_RegardlessOfCaughtExceptionType(Exception ex)
+    {
+        // Every caught exception type — the five declared names AND their
+        // subtypes — must map to the *same* 400 status. None should leak
+        // through as 500 or pick up a different code. Exercises the catch
+        // list uniformly through one endpoint to pin the shared status-code
+        // contract the extracted helper must honor.
+        var fake = new FakeFileService { DeleteException = ex };
+        var controller = CreateController(fake);
+
+        var result = controller.Delete("any");
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+    }
+
+    // =====================================================================
+    // Success-payload shape for the Ok bodies.
+    //
+    // Delete/Move/Copy return Ok(new { success = true }) and Upload returns
+    // Ok(new { path = ... }). The existing happy-path tests read individual
+    // properties but never assert that the property set is *exactly*
+    // { success } or { path }, so a refactor that appended extra fields
+    // (e.g. { success = true, deleted = true }) or retyped `success` would
+    // not be caught. These pin the exact single-field shape and types.
+    // =====================================================================
+
+    [Fact]
+    public void Delete_SuccessPayload_HasExactlyOneBooleanPropertyNamedSuccess()
+    {
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+
+        var result = controller.Delete("any");
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var property = AssertSingleProperty(ok.Value!, "success");
+        Assert.Equal(typeof(bool), property.PropertyType);
+        Assert.Equal(true, property.GetValue(ok.Value));
+    }
+
+    [Fact]
+    public void Move_SuccessPayload_HasExactlyOneBooleanPropertyNamedSuccess()
+    {
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+
+        var result = controller.Move(new MoveRequest("a", "b"));
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var property = AssertSingleProperty(ok.Value!, "success");
+        Assert.Equal(typeof(bool), property.PropertyType);
+        Assert.Equal(true, property.GetValue(ok.Value));
+    }
+
+    [Fact]
+    public void Copy_SuccessPayload_HasExactlyOneBooleanPropertyNamedSuccess()
+    {
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+
+        var result = controller.Copy(new CopyRequest("a", "b"));
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var property = AssertSingleProperty(ok.Value!, "success");
+        Assert.Equal(typeof(bool), property.PropertyType);
+        Assert.Equal(true, property.GetValue(ok.Value));
+    }
+
+    [Fact]
+    public async Task Upload_PathPayload_HasExactlyOneStringPropertyNamedPath()
+    {
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
+
+        var result = await controller.Upload("docs", file);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var property = AssertSingleProperty(ok.Value!, "path");
+        Assert.Equal(typeof(string), property.PropertyType);
+        Assert.Equal("docs/report.txt", property.GetValue(ok.Value));
+    }
+
+    // =====================================================================
+    // The extracted Execute/ExecuteAsync helpers must run the endpoint body
+    // exactly once. A buggy helper that retried or double-invoked the
+    // delegate would silently double every service side effect while
+    // producing an identical response — invisible to the existing tests,
+    // which only inspect the final result. These pin single-invocation by
+    // counting calls on a dedicated double.
+    // =====================================================================
+
+    [Fact]
+    public void Browse_InvokesServiceExactlyOnce()
+    {
+        var service = new CountingFileService();
+        var controller = new FilesController(service);
+
+        controller.Browse("docs");
+
+        Assert.Equal(1, service.BrowseCalls);
+    }
+
+    [Fact]
+    public void Search_InvokesServiceExactlyOnce()
+    {
+        var service = new CountingFileService();
+        var controller = new FilesController(service);
+
+        controller.Search("q", "docs");
+
+        Assert.Equal(1, service.SearchCalls);
+    }
+
+    [Fact]
+    public async Task Upload_InvokesServiceExactlyOnce()
+    {
+        var service = new CountingFileService();
+        var controller = new FilesController(service);
+        var file = FormFileFactory.CreateFormFile("upload.txt", "payload");
+
+        await controller.Upload("docs", file);
+
+        Assert.Equal(1, service.UploadCalls);
+    }
+
+    [Fact]
+    public void Download_InvokesResolveExactlyOnce()
+    {
+        var service = new CountingFileService();
+        var controller = new FilesController(service);
+
+        controller.Download("report.txt");
+
+        Assert.Equal(1, service.ResolveCalls);
+    }
+
+    [Fact]
+    public void Delete_InvokesServiceExactlyOnce()
+    {
+        var service = new CountingFileService();
+        var controller = new FilesController(service);
+
+        controller.Delete("any");
+
+        Assert.Equal(1, service.DeleteCalls);
+    }
+
+    [Fact]
+    public void Move_InvokesServiceExactlyOnce()
+    {
+        var service = new CountingFileService();
+        var controller = new FilesController(service);
+
+        controller.Move(new MoveRequest("a", "b"));
+
+        Assert.Equal(1, service.MoveCalls);
+    }
+
+    [Fact]
+    public void Copy_InvokesServiceExactlyOnce()
+    {
+        var service = new CountingFileService();
+        var controller = new FilesController(service);
+
+        controller.Copy(new CopyRequest("a", "b"));
+
+        Assert.Equal(1, service.CopyCalls);
+    }
+
+    /// <summary>
+    /// Minimal <see cref="IFileService"/> double that counts how many times
+    /// each method is invoked, used to assert the endpoint bodies run exactly
+    /// once after the Execute/ExecuteAsync extraction (guards against a helper
+    /// that accidentally retries or double-invokes its delegate).
+    /// </summary>
+    private sealed class CountingFileService : IFileService
+    {
+        public int BrowseCalls;
+        public int SearchCalls;
+        public int ResolveCalls;
+        public int UploadCalls;
+        public int DeleteCalls;
+        public int MoveCalls;
+        public int CopyCalls;
+
+        public BrowseResultDto Browse(string relativePath)
+        {
+            BrowseCalls++;
+            return new BrowseResultDto(string.Empty, null, Array.Empty<FileEntryDto>(), 0, 0, 0L);
+        }
+
+        public SearchResultDto Search(string query, string relativePath)
+        {
+            SearchCalls++;
+            return new SearchResultDto(string.Empty, string.Empty, Array.Empty<FileEntryDto>());
+        }
+
+        public string ResolveFullPath(string relativePath)
+        {
+            ResolveCalls++;
+            return Path.Combine(Path.GetTempPath(), "resolved.txt");
+        }
+
+        public Task UploadAsync(string relativeDirPath, IFormFile file)
+        {
+            UploadCalls++;
+            return Task.CompletedTask;
+        }
+
+        public void Delete(string relativePath) => DeleteCalls++;
+        public void Move(MoveRequest request) => MoveCalls++;
+        public void Copy(CopyRequest request) => CopyCalls++;
     }
 }

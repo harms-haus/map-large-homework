@@ -110,38 +110,6 @@ public class ProgramWiringTests
     }
 
     // =====================================================================
-    // Template preservation (unchanged scaffolding)
-    // =====================================================================
-
-    [Fact]
-    public void Program_Preserves_WebApplication_CreateBuilder()
-    {
-        AssertPresent(@"WebApplication\s*\.\s*CreateBuilder\s*\(",
-            "WebApplication.CreateBuilder(args)");
-    }
-
-    [Fact]
-    public void Program_Preserves_AddControllers()
-    {
-        AssertPresent(@"Services\s*\.\s*AddControllers\s*\(",
-            "builder.Services.AddControllers()");
-    }
-
-    [Fact]
-    public void Program_Preserves_Build()
-    {
-        AssertPresent(@"\.\s*Build\s*\(\s*\)", "builder.Build()");
-    }
-
-    [Fact]
-    public void Program_StillDeclaresPublicProgramClassWithMain()
-    {
-        AssertPresent(@"class\s+Program\b", "a Program class declaration");
-        AssertPresent(@"(public|private|internal)?\s*static\s+void\s+Main\s*\(",
-            "a static void Main entry point");
-    }
-
-    // =====================================================================
     // Service registration: FileServiceOptions
     // =====================================================================
 

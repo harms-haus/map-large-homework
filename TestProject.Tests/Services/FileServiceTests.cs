@@ -1,10 +1,13 @@
+using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
+using TestProject.Configuration;
 using TestProject.Models;
 using TestProject.Services;
+using TestProject.Tests.TestHelpers;
 using Xunit;
 
 namespace TestProject.Tests.Services;
@@ -15,8 +18,9 @@ namespace TestProject.Tests.Services;
 /// never touch the real file system outside a scratch directory.
 ///
 /// The service computes its home root once, at construction time, as
-/// <c>Path.GetFullPath(Path.Combine(env.ContentRootPath, options.HomeDirectory))</c>
-/// and is expected to create that directory if it does not yet exist. Every
+/// <c>Path.GetFullPath(Path.Combine(env.ContentRootPath, options.HomeDirectory))</c>.
+/// Directory creation is deferred (lazy) until first use, so these tests
+/// trigger an operation before asserting the directory exists on disk. Every
 /// operation must funnel inputs through a path-safety check so that paths
 /// escaping the home root throw <see cref="ArgumentException"/>.
 /// </summary>
@@ -60,11 +64,19 @@ public class FileServiceTests : IDisposable
         return (service, root);
     }
 
-    private static IFormFile CreateFormFile(string fileName, string content)
+    // Builds the directory chain {baseDir}/d1/d2/.../d{levels}, creating every
+    // intermediate directory along the way, and returns the deepest directory
+    // path. `levels` is the number of nested directories beneath baseDir, so a
+    // copy of baseDir recurses to depth == levels.
+    private static string CreateNestedChain(string baseDir, int levels)
     {
-        var bytes = Encoding.UTF8.GetBytes(content);
-        var stream = new MemoryStream(bytes);
-        return new FormFile(stream, 0, bytes.Length, "file", fileName);
+        var current = baseDir;
+        for (var i = 1; i <= levels; i++)
+        {
+            current = Path.Combine(current, $"d{i}");
+        }
+        Directory.CreateDirectory(current);
+        return current;
     }
 
     // =====================================================================
@@ -79,7 +91,11 @@ public class FileServiceTests : IDisposable
 
         Assert.False(Directory.Exists(expectedRoot));
 
-        var (_, root) = CreateService(home);
+        var (service, root) = CreateService(home);
+
+        // Root creation is lazy: it happens on first use, not in the
+        // constructor. Trigger initialization before asserting existence.
+        service.ResolveFullPath("");
 
         Assert.True(Directory.Exists(root));
         Assert.Equal(expectedRoot, root);
@@ -93,7 +109,11 @@ public class FileServiceTests : IDisposable
 
         Assert.False(Directory.Exists(expectedRoot));
 
-        var (_, root) = CreateService(home);
+        var (service, root) = CreateService(home);
+
+        // Root creation is lazy: trigger initialization (which must create
+        // the full nested path) before asserting existence.
+        service.ResolveFullPath("");
 
         Assert.Equal(expectedRoot, root);
         Assert.True(Directory.Exists(root));
@@ -108,8 +128,190 @@ public class FileServiceTests : IDisposable
         var service = new FileService(options, env);
 
         var expected = Path.GetFullPath(Path.Combine(_contentRoot, "Home"));
+        // ResolveFullPath triggers lazy initialization, materializing the
+        // default "Home" directory before we assert its existence.
         Assert.Equal(expected, service.ResolveFullPath(""));
         Assert.True(Directory.Exists(expected));
+    }
+
+    // =====================================================================
+    // Lazy initialization of the home root
+    //
+    // Two complementary flavors of test live here:
+    //   1. The *negative* (lazy-specific) characterization below — the home
+    //      directory must NOT exist on disk immediately after construction.
+    //      This is what distinguishes lazy creation from the legacy eager
+    //      `Directory.CreateDirectory(root)` that ran in the constructor, and
+    //      it is the observable behavior the README's Configuration section
+    //      documents ("created automatically on first use (lazily), ... so a
+    //      misconfigured path surfaces on the first request rather than at
+    //      startup"). These tests FAIL the moment creation moves back into
+    //      the constructor, which would also make the README wording stale.
+    //   2. The *positive* (agnostic) characterization further down — the
+    //      directory MUST exist after the first operation, regardless of
+    //      whether creation happens eagerly or lazily.
+    // =====================================================================
+
+    /// <summary>
+    /// The home directory must NOT be materialized by the constructor. Root
+    /// creation is deferred to first use via the lazy value factory, so
+    /// constructing the service — equivalent to DI resolution at startup —
+    /// has no filesystem side effects. This is the negative half of the lazy
+    /// contract and is the assertion that proves the README's old "created
+    /// automatically on startup" wording was wrong: an eager constructor
+    /// that called <c>Directory.CreateDirectory(root)</c> would make this
+    /// test fail.
+    /// </summary>
+    [Fact]
+    public void Constructor_DoesNotCreateRootDirectory_BeforeFirstUse()
+    {
+        var home = "EagerCheckFlat";
+        var expectedRoot = Path.GetFullPath(Path.Combine(_contentRoot, home));
+
+        Assert.False(Directory.Exists(expectedRoot));
+
+        var (service, _) = CreateService(home);
+
+        // No file-system operation has been invoked yet, so the home root
+        // must not exist on disk. Constructing the service alone must not
+        // touch the disk.
+        Assert.False(Directory.Exists(expectedRoot));
+
+        // Sanity check that the same root DOES get created on first use, so
+        // this test cannot pass vacuously (e.g. due to an uncreatable path).
+        service.ResolveFullPath("");
+        Assert.True(Directory.Exists(expectedRoot));
+    }
+
+    /// <summary>
+    /// A nested home directory (e.g. <c>"Data/Files"</c>) must not have any of
+    /// its ancestor segments created by the constructor either. Lazy
+    /// creation means neither the intermediate <c>Data</c> directory nor the
+    /// leaf <c>Data/Files</c> exists until the first operation targets the
+    /// root. This guards against an eager constructor whose
+    /// <c>Directory.CreateDirectory</c> would materialize the whole chain at
+    /// startup.
+    /// </summary>
+    [Fact]
+    public void Constructor_DoesNotCreateNestedHomeDirectory_BeforeFirstUse()
+    {
+        var home = "EagerCheckNested/Deep";
+        var parentSegment = Path.GetFullPath(Path.Combine(_contentRoot, "EagerCheckNested"));
+        var expectedRoot = Path.GetFullPath(Path.Combine(_contentRoot, home));
+
+        Assert.False(Directory.Exists(parentSegment));
+        Assert.False(Directory.Exists(expectedRoot));
+
+        var (service, _) = CreateService(home);
+
+        // Neither the intermediate nor the leaf directory should exist yet.
+        Assert.False(Directory.Exists(parentSegment));
+        Assert.False(Directory.Exists(expectedRoot));
+
+        // First use materializes the entire nested chain in one step.
+        service.ResolveFullPath("");
+        Assert.True(Directory.Exists(parentSegment));
+        Assert.True(Directory.Exists(expectedRoot));
+    }
+
+    /// <summary>
+    /// A misconfigured home directory (here, one containing an illegal null
+    /// character) must NOT surface at construction time. The path is only
+    /// resolved inside the lazy value factory, so the error is deferred to
+    /// the first file-system operation that touches <c>Root</c>. This is the
+    /// "a misconfigured path surfaces on the first request rather than at
+    /// startup" half of the README's lazy-creation wording: an eager
+    /// constructor that resolved and created the path up front would throw
+    /// here instead of on first use. The null byte is the only invalid-path
+    /// character that <see cref="Path.GetFullPath"/> rejects on every
+    /// platform (on Linux, characters like <c>&lt;&gt;</c> and <c>:</c> are
+    /// legal), so it is used for cross-platform determinism.
+    /// </summary>
+    [Fact]
+    public void Constructor_MisconfiguredHomeDirectory_DoesNotThrowUntilFirstUse()
+    {
+        var env = new FakeWebHostEnvironment { ContentRootPath = _contentRoot };
+        var options = Options.Create(new FileServiceOptions { HomeDirectory = "bad\0path" });
+
+        // Construction must succeed: the bad path has not been resolved yet.
+        var service = new FileService(options, env);
+        Assert.NotNull(service);
+
+        // The misconfiguration surfaces on first use, not at startup / DI
+        // resolution.
+        Assert.Throws<ArgumentException>(() => service.ResolveFullPath(""));
+    }
+
+    /// <summary>
+    /// With lazy initialization, every public entry point that resolves a
+    /// path must materialize the home directory on first use. These checks
+    /// are written so they stay green whether the directory is created in the
+    /// constructor (legacy) or on first access (lazy): in both cases the
+    /// directory must exist after the call returns.
+    /// </summary>
+    [Theory]
+    [InlineData("Resolve")]
+    [InlineData("Browse")]
+    [InlineData("Search")]
+    public void LazyInit_CreatesRootDirectory_OnFirstMethodCall(string entryPoint)
+    {
+        var (service, root) = CreateService($"LazyHome_{entryPoint}");
+
+        switch (entryPoint)
+        {
+            case "Resolve":
+                service.ResolveFullPath("");
+                break;
+            case "Browse":
+                service.Browse("");
+                break;
+            case "Search":
+                service.Search("anything", "");
+                break;
+            default:
+                throw new ArgumentException($"Unknown entry point: {entryPoint}");
+        }
+
+        Assert.True(Directory.Exists(root));
+    }
+
+    [Fact]
+    public void LazyInit_IsSafe_UnderConcurrentFirstAccess()
+    {
+        var (service, root) = CreateService();
+
+        // Hammer the first-access path from many threads at once. With
+        // LazyThreadSafetyMode.ExecutionAndPublication the value factory must
+        // run exactly once and no caller should observe an exception.
+        var exceptions = new ConcurrentQueue<Exception>();
+
+        Parallel.For(0, 32, _ =>
+        {
+            try
+            {
+                service.Browse("");
+            }
+            catch (Exception ex)
+            {
+                exceptions.Enqueue(ex);
+            }
+        });
+
+        Assert.Empty(exceptions);
+        Assert.True(Directory.Exists(root));
+    }
+
+    [Fact]
+    public void Constructor_NormalizesHomeDirectory_ToFullPath()
+    {
+        // A home directory containing a redundant "." segment must normalize
+        // (via Path.GetFullPath) to the same root as the clean path. The lazy
+        // value factory must compute the identical normalized path the ctor
+        // previously produced eagerly.
+        var (service, _) = CreateService("Data/./Files");
+        var expected = Path.GetFullPath(Path.Combine(_contentRoot, "Data", "Files"));
+
+        Assert.Equal(expected, service.ResolveFullPath(""));
     }
 
     // =====================================================================
@@ -282,6 +484,254 @@ public class FileServiceTests : IDisposable
         Assert.Throws<ArgumentException>(() => service.Browse("../escape"));
     }
 
+    // ---------------------------------------------------------------------
+    // Additional characterization tests for Browse. These pin down the exact
+    // observable output contract of the directory enumeration so that the
+    // single-pass refactor (replacing the separate GetDirectories/GetFiles
+    // traversals with one EnumerateFileSystemInfos pass) can be verified to
+    // preserve ordering, per-entry metadata, and aggregations.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public void Browse_EmptyDirectory_ReturnsNoEntries_AndZeroAggregates()
+    {
+        var (service, _) = CreateService();
+
+        // The home root is materialized lazily by Browse itself and contains
+        // nothing. A single-pass enumerator over an empty directory must
+        // yield zero entries, not throw, and leave all aggregates at zero.
+        var result = service.Browse("");
+
+        Assert.Empty(result.Entries);
+        Assert.Equal(0, result.FolderCount);
+        Assert.Equal(0, result.FileCount);
+        Assert.Equal(0L, result.TotalSize);
+        Assert.Equal("", result.Path);
+        Assert.Null(result.Parent);
+    }
+
+    [Fact]
+    public async Task Browse_DirectoryWithOnlyFiles_SortsByName_WithZeroFolderCount()
+    {
+        var (service, root) = CreateService();
+        service.ResolveFullPath(""); // materialize the lazily-created home root
+        await File.WriteAllTextAsync(Path.Combine(root, "c.txt"), "c");
+        await File.WriteAllTextAsync(Path.Combine(root, "a.txt"), "aaa");
+        await File.WriteAllTextAsync(Path.Combine(root, "b.txt"), "bb");
+
+        var result = service.Browse("");
+
+        Assert.Equal(0, result.FolderCount);
+        Assert.Equal(3, result.FileCount);
+        Assert.Equal(6L, result.TotalSize); // 1 + 3 + 2
+        Assert.Equal(new[] { "a.txt", "b.txt", "c.txt" },
+            result.Entries.Select(e => e.Name).ToArray());
+        Assert.All(result.Entries, e => Assert.False(e.IsDirectory));
+    }
+
+    [Fact]
+    public void Browse_DirectoryWithOnlySubdirectories_SortsByName_WithZeroFileCountAndSize()
+    {
+        var (service, root) = CreateService();
+        Directory.CreateDirectory(Path.Combine(root, "beta"));
+        Directory.CreateDirectory(Path.Combine(root, "Gamma"));
+        Directory.CreateDirectory(Path.Combine(root, "alpha"));
+
+        var result = service.Browse("");
+
+        Assert.Equal(3, result.FolderCount);
+        Assert.Equal(0, result.FileCount);
+        Assert.Equal(0L, result.TotalSize);
+        // OrdinalIgnoreCase: 'a' (97) < 'b' (98) < 'G'->'g' (103).
+        Assert.Equal(new[] { "alpha", "beta", "Gamma" },
+            result.Entries.Select(e => e.Name).ToArray());
+        Assert.All(result.Entries, e => Assert.True(e.IsDirectory));
+        Assert.All(result.Entries, e => Assert.Equal(0L, e.Size));
+    }
+
+    [Fact]
+    public async Task Browse_SortsEntries_OrdinalIgnoreCase_MixedCaseNames()
+    {
+        var (service, root) = CreateService();
+        service.ResolveFullPath(""); // materialize the lazily-created home root
+        await File.WriteAllTextAsync(Path.Combine(root, "C.txt"), "x");
+        await File.WriteAllTextAsync(Path.Combine(root, "a.txt"), "x");
+        await File.WriteAllTextAsync(Path.Combine(root, "B.txt"), "x");
+
+        var result = service.Browse("");
+
+        // All files; OrdinalIgnoreCase treats uppercase and lowercase as
+        // equal, so the order is a.txt, B.txt, C.txt regardless of input
+        // casing.
+        Assert.Equal(new[] { "a.txt", "B.txt", "C.txt" },
+            result.Entries.Select(e => e.Name).ToArray());
+    }
+
+    [Fact]
+    public async Task Browse_ZeroByteFile_ReportsSizeZero()
+    {
+        var (service, root) = CreateService();
+        service.ResolveFullPath(""); // materialize the lazily-created home root
+        await File.WriteAllTextAsync(Path.Combine(root, "empty.txt"), "");
+
+        var result = service.Browse("");
+
+        var file = result.Entries.Single(e => e.Name == "empty.txt");
+        Assert.False(file.IsDirectory);
+        Assert.Equal(0L, file.Size);
+        Assert.Equal(1, result.FileCount);
+        Assert.Equal(0L, result.TotalSize);
+    }
+
+    [Fact]
+    public async Task Browse_PreservesEntryNames_AndPaths_ForSpacesDotsAndNoExtension()
+    {
+        var (service, root) = CreateService();
+        service.ResolveFullPath(""); // materialize the lazily-created home root
+        await File.WriteAllTextAsync(Path.Combine(root, "file.with.dots.txt"), "x");
+        await File.WriteAllTextAsync(Path.Combine(root, "file with spaces.txt"), "x");
+        await File.WriteAllTextAsync(Path.Combine(root, "no_extension"), "x");
+
+        var result = service.Browse("");
+
+        // space (32) sorts before '.' (46); both start with 'f' which sorts
+        // before 'n' (110).
+        Assert.Equal(
+            new[] { "file with spaces.txt", "file.with.dots.txt", "no_extension" },
+            result.Entries.Select(e => e.Name).ToArray());
+        Assert.Equal("file.with.dots.txt",
+            result.Entries.Single(e => e.Name == "file.with.dots.txt").Path);
+        Assert.Equal("file with spaces.txt",
+            result.Entries.Single(e => e.Name == "file with spaces.txt").Path);
+        Assert.Equal("no_extension",
+            result.Entries.Single(e => e.Name == "no_extension").Path);
+    }
+
+    [Fact]
+    public async Task Browse_TotalSize_SumsAllCurrentDirectoryFileSizes()
+    {
+        var (service, root) = CreateService();
+        Directory.CreateDirectory(Path.Combine(root, "subdir")); // contributes 0 to size
+        await File.WriteAllTextAsync(Path.Combine(root, "a.txt"), new string('a', 100));
+        await File.WriteAllTextAsync(Path.Combine(root, "b.txt"), new string('b', 50));
+        await File.WriteAllTextAsync(Path.Combine(root, "c.txt"), new string('c', 25));
+
+        var result = service.Browse("");
+
+        // Confirms the sum is computed across every file in the directory,
+        // not just the first/last, and that directories contribute nothing.
+        Assert.Equal(175L, result.TotalSize);
+        Assert.Equal(3, result.FileCount);
+        Assert.Equal(1, result.FolderCount);
+    }
+
+    [Fact]
+    public async Task Browse_WhitespacePath_ResolvesToRootListing()
+    {
+        var (service, root) = CreateService();
+        Directory.CreateDirectory(Path.Combine(root, "docs"));
+        await File.WriteAllTextAsync(Path.Combine(root, "a.txt"), "x");
+
+        var result = service.Browse("   ");
+
+        Assert.Equal("", result.Path);
+        Assert.Null(result.Parent);
+        Assert.Equal(1, result.FolderCount);
+        Assert.Equal(1, result.FileCount);
+        Assert.Equal(new[] { "docs", "a.txt" },
+            result.Entries.Select(e => e.Name).ToArray());
+    }
+
+    [Fact]
+    public async Task Browse_MixedDirsAndFiles_AlwaysPlacesAllDirectoriesBeforeAllFiles()
+    {
+        var (service, root) = CreateService();
+        // Names chosen so that an alphabetical (name-only) sort would
+        // interleave files and directories; the contract requires dirs first.
+        Directory.CreateDirectory(Path.Combine(root, "z_dir"));
+        Directory.CreateDirectory(Path.Combine(root, "a_dir"));
+        await File.WriteAllTextAsync(Path.Combine(root, "m_file.txt"), "x");
+        await File.WriteAllTextAsync(Path.Combine(root, "b_file.txt"), "x");
+
+        var result = service.Browse("");
+
+        Assert.Equal(
+            new[] { "a_dir", "z_dir", "b_file.txt", "m_file.txt" },
+            result.Entries.Select(e => e.Name).ToArray());
+        Assert.Equal(new[] { true, true, false, false },
+            result.Entries.Select(e => e.IsDirectory).ToArray());
+        Assert.Equal(2, result.FolderCount);
+        Assert.Equal(2, result.FileCount);
+    }
+
+    // ---------------------------------------------------------------------
+    // Characterization tests for parent-path computation (the private static
+    // ComputeParent helper, reachable only through Browse). These pin down
+    // the Parent field across every path depth so a rewrite delegating to
+    // Path.GetDirectoryName can be verified to preserve the exact contract:
+    //   - root (empty/whitespace)            -> null
+    //   - single segment ("docs")            -> ""   (direct child of root)
+    //   - two segments ("docs/reports")      -> "docs"
+    //   - three+ segments ("a/b/c")          -> "a/b"
+    // The 3+ segment cases and the special-character segment cases below are
+    // not covered elsewhere; they are the most likely to regress under a
+    // LastIndexOf/Substring -> Path.GetDirectoryName swap.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public void Browse_ThreeSegmentPath_ParentIsTwoSegmentPath()
+    {
+        var (service, root) = CreateService();
+        Directory.CreateDirectory(Path.Combine(root, "docs", "reports", "2024"));
+
+        var result = service.Browse("docs/reports/2024");
+
+        Assert.Equal("docs/reports/2024", result.Path);
+        Assert.Equal("docs/reports", result.Parent);
+    }
+
+    [Fact]
+    public async Task Browse_FourSegmentPath_ParentIsThreeSegmentPath()
+    {
+        var (service, root) = CreateService();
+        Directory.CreateDirectory(Path.Combine(root, "a", "b", "c", "d"));
+        await File.WriteAllTextAsync(Path.Combine(root, "a", "b", "c", "d", "file.txt"), "x");
+
+        var result = service.Browse("a/b/c/d");
+
+        Assert.Equal("a/b/c/d", result.Path);
+        Assert.Equal("a/b/c", result.Parent);
+    }
+
+    [Fact]
+    public void Browse_ParentSegmentContainingDots_IsPreservedVerbatim()
+    {
+        // Segment names may legitimately contain dots (e.g. version
+        // directories). The parent computation must return the whole leading
+        // segment, not truncate at a "." as if it were a file extension.
+        var (service, root) = CreateService();
+        Directory.CreateDirectory(Path.Combine(root, "v1.2", "release"));
+
+        var result = service.Browse("v1.2/release");
+
+        Assert.Equal("v1.2/release", result.Path);
+        Assert.Equal("v1.2", result.Parent);
+    }
+
+    [Fact]
+    public void Browse_ParentSegmentContainingSpaces_IsPreservedVerbatim()
+    {
+        // Whitespace inside a segment name must not be treated as a delimiter
+        // or trimmed; the leading segment is returned verbatim.
+        var (service, root) = CreateService();
+        Directory.CreateDirectory(Path.Combine(root, "my docs", "notes"));
+
+        var result = service.Browse("my docs/notes");
+
+        Assert.Equal("my docs/notes", result.Path);
+        Assert.Equal("my docs", result.Parent);
+    }
+
     // =====================================================================
     // Search
     // =====================================================================
@@ -325,6 +775,8 @@ public class FileServiceTests : IDisposable
     public async Task Search_CapsResultsAtFiveHundred()
     {
         var (service, root) = CreateService();
+        // Materialize the lazily-created home root so fixtures can be written into it.
+        service.ResolveFullPath("");
         for (var i = 0; i < 550; i++)
         {
             await File.WriteAllTextAsync(Path.Combine(root, $"match-{i:D3}.txt"), "");
@@ -353,7 +805,7 @@ public class FileServiceTests : IDisposable
     public async Task UploadAsync_WritesFileContent_ToResolvedDirectory()
     {
         var (service, root) = CreateService();
-        var file = CreateFormFile("upload.txt", "file-content");
+        var file = FormFileFactory.CreateFormFile("upload.txt", "file-content");
 
         await service.UploadAsync("", file);
 
@@ -365,7 +817,7 @@ public class FileServiceTests : IDisposable
     public async Task UploadAsync_CreatesTargetDirectory_WhenMissing()
     {
         var (service, root) = CreateService();
-        var file = CreateFormFile("file.txt", "data");
+        var file = FormFileFactory.CreateFormFile("file.txt", "data");
 
         await service.UploadAsync("newdir", file);
 
@@ -377,7 +829,7 @@ public class FileServiceTests : IDisposable
     public async Task UploadAsync_PathEscapingRoot_ThrowsArgumentException()
     {
         var (service, _) = CreateService();
-        var file = CreateFormFile("a.txt", "x");
+        var file = FormFileFactory.CreateFormFile("a.txt", "x");
 
         await Assert.ThrowsAsync<ArgumentException>(() => service.UploadAsync("../escape", file));
     }
@@ -390,6 +842,8 @@ public class FileServiceTests : IDisposable
     public async Task Delete_RemovesFile()
     {
         var (service, root) = CreateService();
+        // Materialize the lazily-created home root so fixtures can be written into it.
+        service.ResolveFullPath("");
         var path = Path.Combine(root, "a.txt");
         await File.WriteAllTextAsync(path, "x");
 
@@ -420,6 +874,70 @@ public class FileServiceTests : IDisposable
         Assert.Throws<ArgumentException>(() => service.Delete("../escape"));
     }
 
+    [Fact]
+    public void Delete_EmptyDirectory_Succeeds()
+    {
+        var (service, root) = CreateService();
+        var dir = Path.Combine(root, "empty");
+        Directory.CreateDirectory(dir);
+
+        // An empty directory is a distinct case from a populated one: the
+        // recursive flag is a no-op but the branch selection must still
+        // target Directory.Delete rather than File.Delete.
+        service.Delete("empty");
+
+        Assert.False(Directory.Exists(dir));
+    }
+
+    [Fact]
+    public void Delete_NonExistentFile_SucceedsSilently()
+    {
+        var (service, root) = CreateService();
+        // Materialize the lazily-created home root so the parent of the
+        // target path exists on disk.
+        service.ResolveFullPath("");
+        var path = Path.Combine(root, "ghost.txt");
+
+        Assert.False(File.Exists(path));
+
+        // Deleting a path that is already gone must satisfy the post-condition
+        // (entry absent) without throwing — Delete is idempotent for files.
+        var ex = Record.Exception(() => service.Delete("ghost.txt"));
+
+        Assert.Null(ex);
+        Assert.False(File.Exists(path));
+    }
+
+    /// <summary>
+    /// Pins down the post-fix contract for the TOCTOU race in <c>Delete</c>.
+    /// The legacy check-then-act body throws
+    /// <see cref="DirectoryNotFoundException"/> here: <c>Directory.Delete</c>
+    /// fails because the path is absent, and the fall-through
+    /// <c>File.Delete</c> *also* fails because the parent directory is
+    /// missing. This mirrors the exact failure mode of the race (the entry
+    /// vanishes between the <c>Exists</c> check and the delete call), so the
+    /// race-free replacement — which must treat "already gone" as success —
+    /// is required to make this test pass.
+    /// </summary>
+    [Fact]
+    public void Delete_NonExistentNestedPath_SucceedsSilently()
+    {
+        var (service, root) = CreateService();
+        // Materialize the lazily-created home root.
+        service.ResolveFullPath("");
+        var parentDir = Path.Combine(root, "nodir");
+        var path = Path.Combine(parentDir, "ghost.txt");
+
+        Assert.False(Directory.Exists(parentDir));
+        Assert.False(File.Exists(path));
+
+        var ex = Record.Exception(() => service.Delete("nodir/ghost.txt"));
+
+        Assert.Null(ex);
+        Assert.False(File.Exists(path));
+        Assert.False(Directory.Exists(parentDir));
+    }
+
     // =====================================================================
     // Move
     // =====================================================================
@@ -428,6 +946,8 @@ public class FileServiceTests : IDisposable
     public async Task Move_RelocatesFile_ToResolvedDestination()
     {
         var (service, root) = CreateService();
+        // Materialize the lazily-created home root so fixtures can be written into it.
+        service.ResolveFullPath("");
         await File.WriteAllTextAsync(Path.Combine(root, "src.txt"), "content");
 
         service.Move(new MoveRequest("src.txt", "dst.txt"));
@@ -440,6 +960,8 @@ public class FileServiceTests : IDisposable
     public async Task Move_CreatesDestinationParentDirectory()
     {
         var (service, root) = CreateService();
+        // Materialize the lazily-created home root so fixtures can be written into it.
+        service.ResolveFullPath("");
         await File.WriteAllTextAsync(Path.Combine(root, "src.txt"), "content");
 
         service.Move(new MoveRequest("src.txt", "archive/dst.txt"));
@@ -462,6 +984,130 @@ public class FileServiceTests : IDisposable
         Assert.True(File.Exists(Path.Combine(root, "dir2", "a.txt")));
         Assert.True(File.Exists(Path.Combine(root, "dir2", "sub", "b.txt")));
         Assert.Equal("y", await File.ReadAllTextAsync(Path.Combine(root, "dir2", "sub", "b.txt")));
+    }
+
+    /// <summary>
+    /// The destination parent-creation step (the line that previously used the
+    /// null-forgiving operator) must materialize the full parent chain when the
+    /// destination lives several levels deep. This pins down that behavior so
+    /// the safe-pattern refactor cannot regress normal parent creation.
+    /// </summary>
+    [Fact]
+    public async Task Move_CreatesDeeplyNestedDestinationParentDirectories()
+    {
+        var (service, root) = CreateService();
+        // Materialize the lazily-created home root so fixtures can be written into it.
+        service.ResolveFullPath("");
+        await File.WriteAllTextAsync(Path.Combine(root, "src.txt"), "deep");
+
+        service.Move(new MoveRequest("src.txt", "a/b/c/dst.txt"));
+
+        Assert.False(File.Exists(Path.Combine(root, "src.txt")));
+        Assert.True(File.Exists(Path.Combine(root, "a", "b", "c", "dst.txt")));
+        Assert.Equal("deep", await File.ReadAllTextAsync(Path.Combine(root, "a", "b", "c", "dst.txt")));
+    }
+
+    /// <summary>
+    /// Moving a directory into a destination whose parent does not yet exist
+    /// must create that parent (the same code path used for file moves) and
+    /// then relocate the whole tree intact.
+    /// </summary>
+    [Fact]
+    public async Task Move_Directory_IntoMissingParent_CreatesParentAndRelocates()
+    {
+        var (service, root) = CreateService();
+        Directory.CreateDirectory(Path.Combine(root, "src", "sub"));
+        await File.WriteAllTextAsync(Path.Combine(root, "src", "a.txt"), "x");
+        await File.WriteAllTextAsync(Path.Combine(root, "src", "sub", "b.txt"), "y");
+
+        service.Move(new MoveRequest("src", "archive/dir2"));
+
+        Assert.False(Directory.Exists(Path.Combine(root, "src")));
+        Assert.True(Directory.Exists(Path.Combine(root, "archive", "dir2")));
+        Assert.True(File.Exists(Path.Combine(root, "archive", "dir2", "a.txt")));
+        Assert.Equal("y", await File.ReadAllTextAsync(Path.Combine(root, "archive", "dir2", "sub", "b.txt")));
+    }
+
+    /// <summary>
+    /// Creating the destination parent is idempotent: moving into a path whose
+    /// parent already exists must not throw even though
+    /// <see cref="Directory.CreateDirectory"/> is invoked unconditionally.
+    /// </summary>
+    [Fact]
+    public async Task Move_DestinationParentAlreadyExists_DoesNotThrow()
+    {
+        var (service, root) = CreateService();
+        Directory.CreateDirectory(Path.Combine(root, "existing"));
+        await File.WriteAllTextAsync(Path.Combine(root, "src.txt"), "x");
+
+        service.Move(new MoveRequest("src.txt", "existing/dst.txt"));
+
+        Assert.False(File.Exists(Path.Combine(root, "src.txt")));
+        Assert.True(File.Exists(Path.Combine(root, "existing", "dst.txt")));
+    }
+
+    /// <summary>
+    /// Moving onto an existing destination file is rejected by
+    /// <see cref="File.Move(string,string)"/> (no overwrite). The create-parent
+    /// step must still succeed; the failure comes from the move itself, leaving
+    /// both files unaltered.
+    /// </summary>
+    [Fact]
+    public async Task Move_DestinationFileAlreadyExists_ThrowsIOException()
+    {
+        var (service, root) = CreateService();
+        // Materialize the lazily-created home root so fixtures can be written into it.
+        service.ResolveFullPath("");
+        await File.WriteAllTextAsync(Path.Combine(root, "src.txt"), "1");
+        await File.WriteAllTextAsync(Path.Combine(root, "dst.txt"), "2");
+
+        Assert.Throws<IOException>(() => service.Move(new MoveRequest("src.txt", "dst.txt")));
+
+        // Neither file is altered.
+        Assert.Equal("1", await File.ReadAllTextAsync(Path.Combine(root, "src.txt")));
+        Assert.Equal("2", await File.ReadAllTextAsync(Path.Combine(root, "dst.txt")));
+    }
+
+    /// <summary>
+    /// When the destination's parent directory cannot be computed — here both
+    /// source and destination resolve to the home root, which is configured as
+    /// the filesystem root so <see cref="Path.GetDirectoryName"/> returns null
+    /// — <see cref="FileService.Move"/> must throw a clear
+    /// <see cref="ArgumentException"/> rather than the opaque
+    /// <see cref="ArgumentNullException"/> that
+    /// <c>Directory.CreateDirectory(null!)</c> produced before the fix.
+    /// </summary>
+    /// <remarks>
+    /// This is a specification test for the null-forgiving-operator fix: it
+    /// asserts the post-fix behavior and is expected to FAIL against the
+    /// unfixed code, which throws <see cref="ArgumentNullException"/> (a
+    /// subclass of <see cref="ArgumentException"/>, hence the strict type
+    /// check below).
+    /// </remarks>
+    [Fact]
+    public void Move_DestinationParentIsFileSystemRoot_ThrowsArgumentExceptionNotArgumentNull()
+    {
+        // Misconfigure the home directory to be the filesystem root itself. An
+        // empty relative path then resolves to that root, and
+        // Path.GetDirectoryName of a filesystem root is null. Creating the
+        // filesystem root is a no-op (it already exists), so this does not
+        // touch the real file system.
+        var fsRoot = Path.GetPathRoot(Directory.GetCurrentDirectory())!;
+        var env = new FakeWebHostEnvironment { ContentRootPath = _contentRoot };
+        var options = Options.Create(new FileServiceOptions { HomeDirectory = fsRoot });
+
+        var service = new FileService(options, env);
+
+        var ex = Assert.Throws<ArgumentException>(() =>
+            service.Move(new MoveRequest("", "")));
+
+        // The fix throws a plain ArgumentException with a clear message. The
+        // old code threw ArgumentNullException (a subclass of ArgumentException)
+        // from Directory.CreateDirectory(null!); reject that explicitly so the
+        // test fails until the fix is applied.
+        Assert.IsNotType<ArgumentNullException>(ex);
+        Assert.DoesNotContain("Value cannot be null", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("destination", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -490,6 +1136,8 @@ public class FileServiceTests : IDisposable
     public async Task Copy_DuplicatesFile_KeepingSource()
     {
         var (service, root) = CreateService();
+        // Materialize the lazily-created home root so fixtures can be written into it.
+        service.ResolveFullPath("");
         await File.WriteAllTextAsync(Path.Combine(root, "a.txt"), "content");
 
         service.Copy(new CopyRequest("a.txt", "b.txt"));
@@ -518,6 +1166,8 @@ public class FileServiceTests : IDisposable
     public async Task Copy_DoesNotOverwriteExistingDestination_ThrowsIOException()
     {
         var (service, root) = CreateService();
+        // Materialize the lazily-created home root so fixtures can be written into it.
+        service.ResolveFullPath("");
         await File.WriteAllTextAsync(Path.Combine(root, "a.txt"), "1");
         await File.WriteAllTextAsync(Path.Combine(root, "b.txt"), "2");
 
@@ -544,6 +1194,88 @@ public class FileServiceTests : IDisposable
 
         Assert.Throws<ArgumentException>(() =>
             service.Copy(new CopyRequest("a.txt", "../escape/x.txt")));
+    }
+
+    // =====================================================================
+    // Copy — recursion depth limit
+    //
+    // CopyDirectory recurses with a bounded depth (MaxCopyDepth = 32) so that a
+    // pathological or self-referential tree cannot overflow the stack. The
+    // public Copy(CopyRequest) seeds the recursion at depth 0 and each nested
+    // directory adds one; the guard throws IOException once depth reaches the
+    // limit. The tests below pin both sides of that boundary as well as the
+    // exact exception type/message.
+    // =====================================================================
+
+    [Theory]
+    [InlineData(1)]    // trivial single-level nesting
+    [InlineData(20)]   // comfortably inside the limit
+    [InlineData(31)]   // the deepest level still permitted (depth 31 < 32)
+    public async Task Copy_DirectoryChain_WithinDepthLimit_CopiesCompletely(int levels)
+    {
+        var (service, root) = CreateService();
+
+        var sourceDir = Path.Combine(root, "src");
+        var sourceLeaf = CreateNestedChain(sourceDir, levels);
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "top.txt"), "top");
+        await File.WriteAllTextAsync(Path.Combine(sourceLeaf, "leaf.txt"), "deep");
+
+        service.Copy(new CopyRequest("src", "dst"));
+
+        // The source is only ever read during a copy, so it must survive intact.
+        Assert.True(File.Exists(Path.Combine(sourceDir, "top.txt")));
+        Assert.True(File.Exists(Path.Combine(sourceLeaf, "leaf.txt")));
+
+        // The destination must mirror the structure all the way to the leaf,
+        // proving the depth guard does not reject legitimate deep-but-finite trees.
+        var destLeaf = Path.Combine(root, "dst");
+        for (var i = 1; i <= levels; i++)
+        {
+            destLeaf = Path.Combine(destLeaf, $"d{i}");
+        }
+        Assert.True(File.Exists(Path.Combine(root, "dst", "top.txt")));
+        Assert.True(File.Exists(Path.Combine(destLeaf, "leaf.txt")));
+    }
+
+    [Theory]
+    [InlineData(32)]   // first recursion depth that trips `depth >= MaxCopyDepth`
+    [InlineData(33)]   // one level beyond the boundary
+    [InlineData(50)]   // comfortably beyond the boundary
+    public void Copy_DirectoryChain_AtOrBeyondDepthLimit_ThrowsIOException(int levels)
+    {
+        var (service, root) = CreateService();
+
+        var sourceDir = Path.Combine(root, "src");
+        CreateNestedChain(sourceDir, levels);
+
+        var ex = Assert.Throws<IOException>(() =>
+            service.Copy(new CopyRequest("src", "dst")));
+
+        Assert.Equal(
+            "Directory copy depth limit exceeded (possible cycle)",
+            ex.Message);
+    }
+
+    [Fact]
+    public async Task Copy_DeeplyNestedDirectory_BeyondLimit_LeavesSourceUntouched()
+    {
+        var (service, root) = CreateService();
+
+        // A chain well beyond the limit: the copy must abort with IOException
+        // but must never mutate the source directory it is reading from.
+        var sourceDir = Path.Combine(root, "src");
+        var sourceLeaf = CreateNestedChain(sourceDir, 50);
+        await File.WriteAllTextAsync(Path.Combine(sourceLeaf, "leaf.txt"), "deep");
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "top.txt"), "top");
+
+        Assert.Throws<IOException>(() => service.Copy(new CopyRequest("src", "dst")));
+
+        // Even the deep levels the recursion never reached remain present and
+        // unchanged in the source tree.
+        Assert.True(Directory.Exists(sourceLeaf));
+        Assert.True(File.Exists(Path.Combine(sourceLeaf, "leaf.txt")));
+        Assert.True(File.Exists(Path.Combine(sourceDir, "top.txt")));
+        Assert.Equal("top", await File.ReadAllTextAsync(Path.Combine(sourceDir, "top.txt")));
     }
 
     // =====================================================================
