@@ -85,14 +85,12 @@ describe('startApp search area structure', () => {
       expect(searchButtons).toHaveLength(0);
     });
 
-    it('the toolbar has exactly one .btn element — the Upload label', () => {
-      // The old search button carried the `btn` class; with it gone, the only
-      // `.btn` left in the toolbar is the upload label.
+    it('the toolbar has no .btn elements (the upload label was removed)', () => {
+      // Both the legacy search button and the upload label carried the `btn`
+      // class; with both gone, the toolbar contains no `.btn` elements at all.
       const { toolbar } = setupSearchWrapper();
       const btns = Array.from(toolbar.querySelectorAll('.btn'));
-      expect(btns).toHaveLength(1);
-      expect(btns[0].tagName).toBe('LABEL');
-      expect((btns[0].textContent ?? '').trim()).toBe('Upload');
+      expect(btns).toHaveLength(0);
     });
   });
 
@@ -105,13 +103,12 @@ describe('startApp search area structure', () => {
       expect(toolbar.contains(searchWrapper)).toBe(true);
     });
 
-    it('places search-wrapper between the breadcrumb and the upload label', () => {
+    it('places search-wrapper after the breadcrumb (toolbar has only these two)', () => {
       const { toolbar } = setupSearchWrapper();
       const children = Array.from(toolbar.children);
-      expect(children).toHaveLength(3);
+      expect(children).toHaveLength(2);
       expect(children[0].className).toBe('breadcrumb');
       expect(children[1].className).toBe('search-wrapper');
-      expect(children[2].className).toBe('btn'); // upload label
     });
 
     it('contains the search text input with the "Search..." placeholder', () => {
@@ -255,17 +252,17 @@ describe('startApp search area events', () => {
       await flush();
       vi.useFakeTimers();
 
-      searchInput.value = 'a';
-      searchInput.dispatchEvent(new Event('input'));
-      vi.advanceTimersByTime(200); // first search fires
-      expect(window.location.hash).toBe(toSearchHash('a', 'docs'));
-
       searchInput.value = 'ab';
       searchInput.dispatchEvent(new Event('input'));
-      vi.advanceTimersByTime(199);
-      expect(window.location.hash).toBe(toSearchHash('a', 'docs')); // not yet
-      vi.advanceTimersByTime(1);
+      vi.advanceTimersByTime(200); // first search fires
       expect(window.location.hash).toBe(toSearchHash('ab', 'docs'));
+
+      searchInput.value = 'abc';
+      searchInput.dispatchEvent(new Event('input'));
+      vi.advanceTimersByTime(199);
+      expect(window.location.hash).toBe(toSearchHash('ab', 'docs')); // not yet
+      vi.advanceTimersByTime(1);
+      expect(window.location.hash).toBe(toSearchHash('abc', 'docs'));
     });
   });
 
@@ -370,24 +367,17 @@ describe('startApp search area events', () => {
  * regression that threads the new nodes through the shared context.
  * ========================================================================= */
 describe('startApp search area: DomRefs unchanged', () => {
-  it('passes exactly the 5 standard refs to init (no searchWrapper / clearBtn)', () => {
-    const { searchInput, uploadInput, results, status, breadcrumb } = setupSearchWrapper();
+  it('passes exactly the 4 standard refs to init (no searchWrapper / clearBtn / uploadInput)', () => {
+    const { searchInput, results, status, breadcrumb } = setupSearchWrapper();
 
     expect(init).toHaveBeenCalledTimes(1);
     const refs = vi.mocked(init).mock.calls[0][0];
-    expect(Object.keys(refs).sort()).toEqual([
-      'breadcrumb',
-      'results',
-      'searchInput',
-      'status',
-      'uploadInput',
-    ]);
+    expect(Object.keys(refs).sort()).toEqual(['breadcrumb', 'results', 'searchInput', 'status']);
     // The refs point at the actual rendered nodes (not clones/duplicates).
     expect(refs.results).toBe(results);
     expect(refs.status).toBe(status);
     expect(refs.breadcrumb).toBe(breadcrumb);
     expect(refs.searchInput).toBe(searchInput);
-    expect(refs.uploadInput).toBe(uploadInput);
   });
 
   it('does not attach a separate clear-button listener via the context (no getSearchClearBtn)', async () => {

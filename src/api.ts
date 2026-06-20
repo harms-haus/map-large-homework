@@ -4,6 +4,8 @@ export interface FileEntry {
   isDirectory: boolean;
   size: number;
   lastModified: string;
+  /** Immediate-child count (files + folders) for directories; 0 for files. */
+  itemCount?: number;
 }
 
 export interface BrowseResult {

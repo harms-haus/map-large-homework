@@ -103,7 +103,8 @@ public sealed class FileService : IFileService
                     Path: ToRelative(directoryInfo.FullName),
                     IsDirectory: true,
                     Size: 0,
-                    LastModified: directoryInfo.LastWriteTimeUtc));
+                    LastModified: directoryInfo.LastWriteTimeUtc,
+                    ItemCount: CountImmediateItems(directoryInfo)));
             }
             else
             {
@@ -113,7 +114,8 @@ public sealed class FileService : IFileService
                     Path: ToRelative(fileInfo.FullName),
                     IsDirectory: false,
                     Size: fileInfo.Length,
-                    LastModified: fileInfo.LastWriteTimeUtc));
+                    LastModified: fileInfo.LastWriteTimeUtc,
+                    ItemCount: 0));
             }
         }
 
@@ -187,7 +189,8 @@ public sealed class FileService : IFileService
                         Path: ToRelative(dir),
                         IsDirectory: true,
                         Size: 0,
-                        LastModified: info.LastWriteTimeUtc));
+                        LastModified: info.LastWriteTimeUtc,
+                        ItemCount: CountImmediateItems(info)));
                 }
 
                 // Do not descend into reparse points (symbolic links on
@@ -216,7 +219,8 @@ public sealed class FileService : IFileService
                         Path: ToRelative(file),
                         IsDirectory: false,
                         Size: info.Length,
-                        LastModified: info.LastWriteTimeUtc));
+                        LastModified: info.LastWriteTimeUtc,
+                        ItemCount: 0));
                 }
             }
         }
@@ -427,6 +431,45 @@ public sealed class FileService : IFileService
         }
 
         return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Counts the immediate children (files + subdirectories) of a directory,
+    /// used to populate a directory entry's <see cref="FileEntryDto.ItemCount"/>
+    /// for display in the Size column. Only direct children are counted —
+    /// nested contents below a subdirectory are NOT included. Returns 0 for an
+    /// empty or inaccessible directory, and for a reparse point (symbolic link
+    /// / junction): following such a link would enumerate content outside the
+    /// home sandbox, so it is reported as having no visible children rather
+    /// than descending into its (possibly external) target. Enumeration errors
+    /// (access denied, directory removed between the listing and the count)
+    /// are swallowed and reported as 0 so one unreadable folder cannot abort a
+    /// browse/search response.
+    /// </summary>
+    private static int CountImmediateItems(DirectoryInfo directoryInfo)
+    {
+        if (IsReparsePoint(directoryInfo))
+        {
+            return 0;
+        }
+
+        try
+        {
+            var count = 0;
+            foreach (var _ in directoryInfo.EnumerateFileSystemInfos())
+            {
+                count++;
+            }
+            return count;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return 0;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return 0;
+        }
     }
 
     /// <summary>

@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace TestProject.Models;
 
-public sealed record FileEntryDto(string Name, string Path, bool IsDirectory, long Size, System.DateTime LastModified);
+public sealed record FileEntryDto(string Name, string Path, bool IsDirectory, long Size, System.DateTime LastModified, int ItemCount);
 
 public sealed record BrowseResultDto(string Path, string? Parent, IReadOnlyList<FileEntryDto> Entries, int FolderCount, int FileCount, long TotalSize);
 

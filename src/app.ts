@@ -12,7 +12,7 @@
  *   - `./app/dom-builders.js`        — table/breadcrumb/row/action-button builders
  *   - `./app/render-browse.js`       — browse-result rendering
  *   - `./app/render-search.js`       — search-result rendering
- *   - `./app/toolbar-handlers.js`    — search + upload handlers
+ *   - `./app/toolbar-handlers.js`    — search + upload-into-folder handlers
  *   - `./app/render-orchestrator.js` — route dispatch + render lifecycle
  *
  * Structure (built imperatively via `document.createElement`):
@@ -31,7 +31,7 @@
  *
  *   .file-browser:
  *     toolbar   — .breadcrumb + .search-wrapper (search <input> +
- *                search-icon + clear-btn) + <label> upload
+ *                search-icon + clear-btn)
  *     .results  — file/folder <table>
  *     <footer class="status"> — summary line
  *
@@ -43,7 +43,7 @@
  * existing `import { startApp, renderBrowse, renderSearch } from './app'`
  * continues to resolve without modification.
  */
-import { doSearch, handleUpload, clearSearch } from './app/toolbar-handlers.js';
+import { doSearch, clearSearch } from './app/toolbar-handlers.js';
 import { init } from './app/render-orchestrator.js';
 import type { DomRefs } from './app/context.js';
 
@@ -64,7 +64,7 @@ export function startApp(root: HTMLElement): void {
   const widget = document.createElement('div');
   widget.className = 'file-browser';
 
-  // Toolbar: breadcrumb, search, upload
+  // Toolbar: breadcrumb, search
   const toolbar = document.createElement('div');
   toolbar.className = 'toolbar';
   const breadcrumbEl = document.createElement('div');
@@ -88,24 +88,7 @@ export function startApp(root: HTMLElement): void {
   searchClearBtn.append(clearIcon);
   // ORDER MATTERS: input first, then icon, then clear-btn (CSS uses ~ sibling combinator)
   searchWrapper.append(searchInput, searchIcon, searchClearBtn);
-  const uploadLabel = document.createElement('label');
-  uploadLabel.className = 'btn';
-  uploadLabel.textContent = 'Upload';
-  const uploadInput = document.createElement('input');
-  uploadInput.type = 'file';
-  uploadInput.multiple = true;
-  // Visually hidden via the sr-only clip pattern (the `visually-hidden`
-  // class) rather than the `hidden` HTML attribute: the attribute's UA
-  // `display:none` ejects the control from the tab order, leaving Upload
-  // unreachable via keyboard (WCAG 2.1.1). The class clips it to a 1x1 box
-  // so it stays focusable; the visible "Upload" affordance is this wrapping
-  // label.btn, and `.toolbar label.btn:focus-within` reflects focus onto it.
-  uploadInput.classList.add('visually-hidden');
-  // The input is now the element Tab lands on, so it needs its own accessible
-  // name (the label text alone doesn't name a focusable input reliably).
-  uploadInput.setAttribute('aria-label', 'Upload files');
-  uploadLabel.append(uploadInput);
-  toolbar.append(breadcrumbEl, searchWrapper, uploadLabel);
+  toolbar.append(breadcrumbEl, searchWrapper);
 
   // Results container + status footer
   const resultsEl = document.createElement('div');
@@ -194,8 +177,6 @@ export function startApp(root: HTMLElement): void {
     }
   });
 
-  uploadInput.addEventListener('change', handleUpload);
-
   /* --- Bind refs into the orchestrator + context, subscribe, and kick off
      the initial render. --- */
   const refs: DomRefs = {
@@ -203,7 +184,6 @@ export function startApp(root: HTMLElement): void {
     status: statusEl,
     breadcrumb: breadcrumbEl,
     searchInput,
-    uploadInput,
   };
   init(refs);
 }

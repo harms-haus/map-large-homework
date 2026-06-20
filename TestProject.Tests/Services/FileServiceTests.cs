@@ -672,6 +672,59 @@ public class FileServiceTests : IDisposable
     }
 
     // ---------------------------------------------------------------------
+    // Directory ItemCount (Size column): each directory entry carries the
+    // count of its IMMEDIATE children (files + folders). Nested contents
+    // below a subdirectory are NOT counted, files always report 0, and an
+    // empty directory reports 0. This drives the directory Size column.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public async Task Browse_DirectoryItemCount_CountsImmediateFilesAndFolders_ExcludingNested()
+    {
+        var (service, root) = CreateService();
+        // 'parent' will contain 2 files + 1 subfolder = 3 immediate children.
+        Directory.CreateDirectory(Path.Combine(root, "parent", "child"));
+        await File.WriteAllTextAsync(Path.Combine(root, "parent", "a.txt"), "x");
+        await File.WriteAllTextAsync(Path.Combine(root, "parent", "b.txt"), "x");
+        // Files inside the subfolder must NOT contribute to parent's count.
+        await File.WriteAllTextAsync(Path.Combine(root, "parent", "child", "deep.txt"), "x");
+
+        var result = service.Browse("");
+
+        var parent = result.Entries.Single(e => e.Name == "parent");
+        Assert.True(parent.IsDirectory);
+        Assert.Equal(3, parent.ItemCount); // 2 files + 1 folder; nested file excluded
+    }
+
+    [Fact]
+    public void Browse_EmptyDirectory_ItemCountIsZero()
+    {
+        var (service, root) = CreateService();
+        Directory.CreateDirectory(Path.Combine(root, "empty"));
+
+        var result = service.Browse("");
+
+        var empty = result.Entries.Single(e => e.Name == "empty");
+        Assert.True(empty.IsDirectory);
+        Assert.Equal(0, empty.ItemCount);
+    }
+
+    [Fact]
+    public async Task Browse_FileEntries_ItemCountIsAlwaysZero()
+    {
+        var (service, root) = CreateService();
+        // Materialize the lazily-created home root so the file can be written.
+        service.ResolveFullPath("");
+        await File.WriteAllTextAsync(Path.Combine(root, "a.txt"), "x");
+
+        var result = service.Browse("");
+
+        var file = result.Entries.Single(e => e.Name == "a.txt");
+        Assert.False(file.IsDirectory);
+        Assert.Equal(0, file.ItemCount);
+    }
+
+    // ---------------------------------------------------------------------
     // Characterization tests for parent-path computation (the private static
     // ComputeParent helper, reachable only through Browse). These pin down
     // the Parent field across every path depth:
@@ -758,6 +811,26 @@ public class FileServiceTests : IDisposable
         Assert.Contains(result.Results, r => r.Path == "Report.txt");
         Assert.Contains(result.Results, r => r.Path == "docs/weekly-report.md");
         Assert.DoesNotContain(result.Results, r => r.Name == "notes.txt");
+    }
+
+    [Fact]
+    public async Task Search_DirectoryResult_ItemCountReflectsImmediateChildren()
+    {
+        // A directory that matches the query carries the count of its
+        // immediate children (files + folders), exactly like Browse entries —
+        // the Size column contract is shared across browse and search rows.
+        var (service, root) = CreateService();
+        // 'matchdir' holds 2 files + 1 subfolder = 3 immediate children.
+        Directory.CreateDirectory(Path.Combine(root, "matchdir", "inner"));
+        await File.WriteAllTextAsync(Path.Combine(root, "matchdir", "a.txt"), "x");
+        await File.WriteAllTextAsync(Path.Combine(root, "matchdir", "b.txt"), "x");
+        await File.WriteAllTextAsync(Path.Combine(root, "matchdir", "inner", "deep.txt"), "x");
+
+        var result = service.Search("matchdir", "");
+
+        var dir = result.Results.Single(r => r.Name == "matchdir");
+        Assert.True(dir.IsDirectory);
+        Assert.Equal(3, dir.ItemCount); // nested file excluded
     }
 
     [Fact]

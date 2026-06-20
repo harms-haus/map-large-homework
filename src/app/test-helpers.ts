@@ -46,6 +46,7 @@ export function fileEntry(opts: Partial<FileEntry> & { name: string }): FileEntr
     isDirectory: opts.isDirectory ?? false,
     size: opts.size ?? 0,
     lastModified: opts.lastModified ?? ISO,
+    itemCount: opts.itemCount ?? 0,
   };
 }
 
@@ -98,8 +99,6 @@ export interface SetupCtx {
   searchWrapper: HTMLElement;
   searchClearBtn: HTMLButtonElement;
   searchIcon: HTMLElement;
-  uploadLabel: HTMLLabelElement;
-  uploadInput: HTMLInputElement;
   results: HTMLElement;
   status: HTMLElement;
 }
@@ -130,8 +129,6 @@ export function setup(options: { hash?: string } = {}): SetupCtx {
     searchWrapper: root.querySelector('.search-wrapper') as HTMLElement,
     searchClearBtn: root.querySelector('.search-wrapper .clear-btn') as HTMLButtonElement,
     searchIcon: root.querySelector('.search-wrapper .search-icon') as HTMLElement,
-    uploadLabel: root.querySelector('label.btn') as HTMLLabelElement,
-    uploadInput: root.querySelector('input[type="file"]') as HTMLInputElement,
     results: root.querySelector('.results') as HTMLElement,
     status: root.querySelector('.status') as HTMLElement,
   };

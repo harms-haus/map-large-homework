@@ -127,26 +127,6 @@ describe('startApp', () => {
       expect(searchButtons).toHaveLength(0);
     });
 
-    it('renders an upload control: label.btn wrapping a visually-hidden, multiple file input', () => {
-      const { uploadLabel, uploadInput } = setup();
-      expect(uploadLabel).toBeTruthy();
-      expect(uploadLabel.className).toBe('btn');
-      expect(uploadLabel.textContent).toContain('Upload');
-      expect(uploadInput).toBeTruthy();
-      expect(uploadInput.type).toBe('file');
-      // Keyboard accessibility (WCAG 2.1.1): the input must NOT carry the
-      // `hidden` HTML attribute — UA `display:none` would eject it from the
-      // tab order, leaving the Upload control unreachable via keyboard. It is
-      // visually hidden via the `visually-hidden` sr-only class instead, and
-      // exposes an accessible name. (Full contract: the 'upload control —
-      // keyboard accessibility' suite below.)
-      expect(uploadInput.hasAttribute('hidden')).toBe(false);
-      expect(uploadInput.className).toContain('visually-hidden');
-      expect(uploadInput.getAttribute('aria-label')).toBe('Upload files');
-      expect(uploadInput.hasAttribute('multiple')).toBe(true);
-      expect(uploadLabel.contains(uploadInput)).toBe(true);
-    });
-
     it('renders an empty .results container and a .status footer', () => {
       const { results, status } = setup();
       expect(results).toBeTruthy();
@@ -235,163 +215,6 @@ describe('startApp', () => {
       expect(widget.querySelector('.title')).toBeNull();
       expect(widget.querySelector('.close-btn')).toBeNull();
       expect(widget.querySelector('.dialog-header')).toBeNull();
-    });
-  });
-});
-
-/* ===========================================================================
- * Upload control — keyboard accessibility (WCAG 2.1.1)
- *
- * Background (the bug these tests guard against): the file input was created
- * with `uploadInput.hidden = true`, which sets the HTML `hidden` attribute.
- * The UA stylesheet maps `[hidden]` to `display:none`, and a `display:none`
- * form control is removed from the tab order and cannot receive focus. The
- * only visible Upload affordance is a wrapping `<label class="btn">`, and
- * `<label>` elements are neither focusable nor activatable from the keyboard
- * on their own. Net effect: keyboard-only and screen-reader users could not
- * reach or trigger Upload — a WCAG 2.1.1 (Keyboard) failure — while mouse
- * users could (a `<label>` click forwards to its wrapped input).
- *
- * The fix keeps the input in the accessibility tree and tab order by hiding
- * it *visually* with the standard `visually-hidden` (sr-only) clip pattern
- * rather than the `hidden` attribute, and gives it an `aria-label` so it has
- * an accessible name. Because the `<label class="btn">` still wraps the input,
- * Tab moves focus onto the (visually hidden) input inside the visible Upload
- * button, and Enter/Space opens the file picker. The matching CSS contract
- * — that `.visually-hidden` clips rather than `display:none`s the element,
- * and that the Upload label shows a focus ring via `:focus-within` — lives in
- * `src/app.css.test.ts`.
- *
- * Environment note: happy-dom does NOT model the UA `display:none` for
- * `[hidden]` (a hidden input still reports `getComputedStyle(...).display` as
- * `inline-block`) nor enforce the "hidden elements cannot receive focus"
- * rule. It also reports the `tabIndex` IDL property as -1 for file inputs no
- * matter whether `[hidden]` is set, so these tests assert against the content
- * attributes and classes (no `hidden` attribute + `visually-hidden` class +
- * accessible name + not disabled + no explicit negative tabindex + no inline
- * `display:none`/`visibility:hidden` style) — the *mechanisms* that produce
- * correct behavior in a real browser — rather than observing tab-order /
- * focus-ring rendering, which only a real browser would reflect. The change →
- * handleUpload upload behavior itself is exercised in `toolbar-handlers.test.ts`.
- * ========================================================================= */
-describe('upload control — keyboard accessibility', () => {
-  /* The input must remain in the tab order. The `hidden` HTML attribute is the
-     exact mechanism that broke keyboard access (UA display:none), so its
-     absence is the core assertion of this suite. */
-  describe('the file input is NOT removed from the tab order', () => {
-    it('does not carry the `hidden` HTML attribute', () => {
-      const { uploadInput } = setup();
-      expect(uploadInput.hasAttribute('hidden')).toBe(false);
-    });
-
-    it('the `hidden` IDL property is false', () => {
-      const { uploadInput } = setup();
-      expect(uploadInput.hidden).toBe(false);
-    });
-
-    it('is visually hidden via the `visually-hidden` sr-only class instead', () => {
-      const { uploadInput } = setup();
-      expect(uploadInput.classList.contains('visually-hidden')).toBe(true);
-    });
-
-    it('carries no negative tabindex attribute (which would remove it from the tab order)', () => {
-      const { uploadInput } = setup();
-      // A file input with no tabindex attribute is naturally focusable; ANY
-      // negative tabindex ("-1", "-2", "-5", ...) is a different vector for the
-      // same WCAG 2.1.1 failure (it removes the control from the sequential
-      // focus order). Assert against the content attribute rather than the IDL
-      // `tabIndex`: happy-dom reports `tabIndex` as -1 for file inputs no
-      // matter whether the `hidden` attribute is set, so only the attribute is
-      // a reliable signal here. `null` (no attribute) is the focusable default
-      // and satisfies the contract; a non-negative explicit value does too.
-      const tabindex = uploadInput.getAttribute('tabindex');
-      expect(tabindex === null || Number(tabindex) >= 0).toBe(true);
-    });
-
-    it('is not `disabled` (a disabled form control is also unfocusable)', () => {
-      const { uploadInput } = setup();
-      // `disabled` is a distinct vector for the same WCAG 2.1.1 failure: a
-      // disabled input cannot receive focus and is skipped by Tab. The fix must
-      // keep the control enabled regardless of how it is hidden visually.
-      expect(uploadInput.disabled).toBe(false);
-      expect(uploadInput.hasAttribute('disabled')).toBe(false);
-    });
-
-    it('carries no inline `style` declaring display:none or visibility:hidden', () => {
-      const { uploadInput } = setup();
-      // The class-based `visually-hidden` fix is the only intended hiding
-      // mechanism. An inline `style="display:none"` (or `visibility:hidden` —
-      // both of which remove an element from the tab order) would re-introduce
-      // the keyboard failure independently of the class, so guard against a
-      // regression that adds either via the style property.
-      const inlineStyle = uploadInput.getAttribute('style') ?? '';
-      expect(/display\s*:\s*none/.test(inlineStyle)).toBe(false);
-      expect(/visibility\s*:\s*hidden/.test(inlineStyle)).toBe(false);
-    });
-  });
-
-  /* An unnamed form control is announced generically by screen readers (e.g.
-     "file upload button"). The visible text lives on the wrapping label, but
-     the input itself — the actual focus target — needs its own accessible
-     name now that it is the element Tab lands on. */
-  describe('the file input has an accessible name', () => {
-    it('exposes aria-label="Upload files"', () => {
-      const { uploadInput } = setup();
-      expect(uploadInput.getAttribute('aria-label')).toBe('Upload files');
-    });
-
-    it('the aria-label is a non-empty, non-whitespace string', () => {
-      // Guards against a regression that sets aria-label="" or "   ", which is
-      // worse than no label (an empty accessible name can override a
-      // label-derived name in the name computation).
-      const { uploadInput } = setup();
-      const label = uploadInput.getAttribute('aria-label') ?? '';
-      expect(label.length).toBeGreaterThan(0);
-      expect(label.trim().length).toBeGreaterThan(0);
-    });
-
-    it('does not also set aria-hidden (which would exclude it from the a11y tree)', () => {
-      const { uploadInput } = setup();
-      expect(uploadInput.getAttribute('aria-hidden')).toBeNull();
-    });
-  });
-
-  /* The visible Upload affordance must still wrap the input so the label's
-     click-forwarding and visible "Upload" text keep working for mouse and AT
-     users, and so Tab lands inside the visible button. */
-  describe('the visible Upload label still wraps the input', () => {
-    it('the input is a descendant of the label.btn "Upload" affordance', () => {
-      const { uploadLabel, uploadInput } = setup();
-      expect(uploadLabel.className).toBe('btn');
-      expect(uploadLabel.textContent).toContain('Upload');
-      expect(uploadLabel.contains(uploadInput)).toBe(true);
-    });
-
-    it('there is exactly one file input, nested inside the Upload label', () => {
-      const { root, uploadInput, uploadLabel } = setup();
-      const fileInputs = root.querySelectorAll('input[type="file"]');
-      expect(fileInputs).toHaveLength(1);
-      expect(fileInputs[0]).toBe(uploadInput);
-      expect(uploadLabel.contains(fileInputs[0])).toBe(true);
-    });
-  });
-
-  /* The hiding mechanism is the ONLY thing that changes; the control's type,
-     multiplicity, and change-handler wiring must be preserved. */
-  describe('upload behavior is preserved', () => {
-    it('retains type=file and multiple', () => {
-      const { uploadInput } = setup();
-      expect(uploadInput.type).toBe('file');
-      expect(uploadInput.hasAttribute('multiple')).toBe(true);
-    });
-
-    it('still dispatches `change` to the upload handler (wiring unchanged)', () => {
-      // The fix only changes how the input is *hidden*; the change listener
-      // bound in startApp must remain attached. Dispatching `change` with no
-      // files is a no-op for handleUpload, so this asserts the listener is
-      // wired without coupling to the upload network round-trip.
-      const { uploadInput } = setup({ hash: '#/browse/' });
-      expect(() => uploadInput.dispatchEvent(new Event('change'))).not.toThrow();
     });
   });
 });
@@ -525,9 +348,11 @@ describe('import characterization (KEEP-list behaviors)', () => {
  *   (1) `.breadcrumb .separator`         — breadcrumb separators are class-less
  *       `<span>`s holding the literal "/"; nothing carries `separator`.
  *   (2) `.toolbar label.upload-btn` (+ its `:hover` + the descendant
- *       `input[type=file]` rule) — the upload label uses `btn`, never
- *       `upload-btn`, and the wrapped file input is hidden via the `hidden`
- *       HTML attribute, not via the dead `display:none` descendant rule.
+ *       `input[type=file]` rule) — historically dead because the upload label
+ *       used `btn`, never `upload-btn`. The toolbar upload control has since
+ *       been removed entirely (upload is now reached via the folder/directory
+ *       context menus), so these selectors match even less; the suite below
+ *       pins only the still-relevant breadcrumb invariant.
  *
  * (`.folder-row` was formerly in this dead list, but it is now a LIVE class:
  * folder rows and the ".." parent row carry `folder-row` / `parent-row` so the
@@ -592,35 +417,6 @@ describe('dead CSS selector characterization', () => {
       expect(document.querySelectorAll('.separator')).toHaveLength(0);
     });
   });
-
-  describe('upload control never carries the dead `upload-btn` class', () => {
-    it('the upload label uses `btn` (styled by .btn), and no element is `upload-btn`', () => {
-      const { uploadLabel } = setup();
-      expect(uploadLabel.className).toBe('btn');
-      expect(uploadLabel.classList.contains('upload-btn')).toBe(false);
-      // The dead selector `.toolbar label.upload-btn` matches nothing.
-      expect(document.querySelectorAll('.upload-btn')).toHaveLength(0);
-    });
-
-    it('hides the file input via the `visually-hidden` class — NOT the dead `display:none` rule, NOT the `hidden` attribute', () => {
-      const { uploadInput, uploadLabel } = setup();
-      // The input is visually hidden via the `visually-hidden` sr-only class
-      // (a clip-to-1x1 pattern that keeps it focusable for keyboard users —
-      // see upload-a11y.test.ts), NOT via the `hidden` HTML attribute (UA
-      // `display:none` would eject it from the tab order). Because the hiding
-      // is done by the input's own class, deleting the dead descendant rule
-      // `.toolbar label.upload-btn input[type=file] { display: none; }` cannot
-      // un-hide it.
-      expect(uploadInput.hidden).toBe(false);
-      expect(uploadInput.hasAttribute('hidden')).toBe(false);
-      expect(uploadInput.className).toContain('visually-hidden');
-      // The dead descendant selector `.toolbar label.upload-btn input[type=file]`
-      // still cannot match this input: its label ancestor is `btn`, never
-      // `upload-btn`, so the selector never applied regardless of the input's
-      // own class. Deleting that dead rule cannot un-hide it.
-      expect(uploadLabel.classList.contains('upload-btn')).toBe(false);
-    });
-  });
 });
 
 /* ===========================================================================
@@ -657,7 +453,7 @@ describe('click-to-browse rows', () => {
     renderBrowse(browseResult({ path: 'docs', entries: [dir] }));
 
     const folderRow = rowByName(results.querySelector('table')!, 'sub')!;
-    cellsOf(folderRow)[1].click(); // Size cell (em-dash) — not the name link
+    cellsOf(folderRow)[1].click(); // Size cell (item count) — not the name link
 
     expect(window.location.hash).toBe(toBrowseHash('docs/sub'));
   });

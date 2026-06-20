@@ -8,7 +8,7 @@
  *
  *   - the {@link ApiClient} singleton (used for fetches and download URLs);
  *   - the DOM element refs the render helpers write into (results, status,
- *     breadcrumb, search input, upload input);
+ *     breadcrumb, search input);
  *   - a "render hook" that action-button handlers and the upload handler call
  *     to trigger a fresh route dispatch (used instead of importing the
  *     orchestrator directly, which would create a module cycle: orchestrator →
@@ -28,7 +28,6 @@ export interface DomRefs {
   status: HTMLElement;
   breadcrumb: HTMLElement;
   searchInput: HTMLInputElement;
-  uploadInput: HTMLInputElement;
 }
 
 /* -------------------------------------------------------------------------
@@ -57,7 +56,6 @@ let results!: HTMLElement;
 let status!: HTMLElement;
 let breadcrumb!: HTMLElement;
 let searchInput!: HTMLInputElement;
-let uploadInput!: HTMLInputElement;
 
 /** Bind the DOM refs for the current mount. Called from the orchestrator's `init`. */
 export function setRefs(refs: DomRefs): void {
@@ -65,7 +63,6 @@ export function setRefs(refs: DomRefs): void {
   status = refs.status;
   breadcrumb = refs.breadcrumb;
   searchInput = refs.searchInput;
-  uploadInput = refs.uploadInput;
 }
 
 export function getResults(): HTMLElement {
@@ -82,10 +79,6 @@ export function getBreadcrumb(): HTMLElement {
 
 export function getSearchInput(): HTMLInputElement {
   return searchInput;
-}
-
-export function getUploadInput(): HTMLInputElement {
-  return uploadInput;
 }
 
 /* -------------------------------------------------------------------------

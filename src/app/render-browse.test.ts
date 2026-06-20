@@ -131,18 +131,39 @@ describe('renderBrowse', () => {
   });
 
   describe('directory rows', () => {
-    it('renders the name and an em-dash size, and clicking the name navigates into the folder', async () => {
-      const dir = fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true });
+    it('renders the name and the immediate-child count in the Size cell, and clicking the name navigates into the folder', async () => {
+      const dir = fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true, itemCount: 5 });
       const { results } = await setupCleared();
       renderBrowse(browseResult({ path: 'docs', entries: [dir] }));
 
       const row = rowByName(results.querySelector('table')!, 'sub')!;
       const [nameCell, sizeCell] = cellsOf(row);
       expect(nameCell.textContent?.trim()).toBe('sub');
-      expect(sizeCell.textContent?.trim()).toBe('—');
+      // Directories show their immediate-child count (files + folders).
+      expect(sizeCell.textContent?.trim()).toBe('5');
 
       clickNameLink(row);
       expect(window.location.hash).toBe(toBrowseHash('docs/sub'));
+    });
+
+    it('renders a blank Size cell for an empty directory (itemCount 0)', async () => {
+      const dir = fileEntry({ name: 'empty', path: 'docs/empty', isDirectory: true, itemCount: 0 });
+      const { results } = await setupCleared();
+      renderBrowse(browseResult({ path: 'docs', entries: [dir] }));
+
+      const sizeCell = cellsOf(rowByName(results.querySelector('table')!, 'empty')!)[1];
+      expect(sizeCell.textContent).toBe('');
+    });
+
+    it('defaults a directory with no itemCount to a blank Size cell', async () => {
+      // A directory entry missing itemCount (treated as 0) renders blank.
+      const dir = fileEntry({ name: 'unknown', path: 'docs/unknown', isDirectory: true });
+      delete (dir as Partial<typeof dir>).itemCount;
+      const { results } = await setupCleared();
+      renderBrowse(browseResult({ path: 'docs', entries: [dir] }));
+
+      const sizeCell = cellsOf(rowByName(results.querySelector('table')!, 'unknown')!)[1];
+      expect(sizeCell.textContent).toBe('');
     });
   });
 

@@ -1,25 +1,26 @@
 /**
- * Toolbar event handlers: search submission and file upload.
+ * Toolbar event handlers: search submission, search clearing, and upload into
+ * an arbitrary folder (via the context-menu / row "Upload" action).
  *
- * Both operate against the shared DOM/API context (search input value, upload
- * input file list, current route) and trigger a re-render via the context's
- * render hook.
+ * They operate against the shared DOM/API context (search input value, current
+ * route) and trigger a re-render via the context's render hook.
  */
 import { getCurrentRoute, navigate, toBrowseHash, toSearchHash } from '../router.js';
 import { normalizeRelativePath } from '../format.js';
-import { getApi, getSearchInput, getStatus, getUploadInput, rerender } from './context.js';
+import { getApi, getSearchInput, getStatus, rerender } from './context.js';
 
 /**
  * Navigate to a search hash for the current input value and browse path.
  *
- * An empty (or whitespace-only) query clears the search instead: it navigates
- * to the browse route for the current path so the server never receives an
- * empty `query`, which it rejects with 400.
+ * A query of fewer than two characters (after trimming) does not search: it
+ * navigates to the browse route for the current path instead, so the server
+ * never receives a too-short `query`. This mirrors the empty-query fallback
+ * and keeps the input's text intact (only the route changes).
  */
 export function doSearch(): void {
   const path = normalizeRelativePath(getCurrentRoute().path);
   const query = getSearchInput().value.trim();
-  if (query === '') {
+  if (query.length < 2) {
     navigate(toBrowseHash(path));
     return;
   }
@@ -31,7 +32,7 @@ export function doSearch(): void {
  *
  * Resets the search input value to an empty string, reads the current path
  * (normalised), and navigates to the browse hash for that path — the same
- * behaviour as {@link doSearch} when the query is empty, but exposed as an
+ * behaviour as {@link doSearch} when the query is too short, but exposed as an
  * explicit, unconditional entry point that also wipes the input text.
  */
 export function clearSearch(): void {
@@ -41,49 +42,16 @@ export function clearSearch(): void {
 }
 
 /**
- * Upload every selected file to the current path, handle per-file errors, then
- * clear the input, re-render the listing, and surface any failures in the
- * status footer.
- */
-export async function handleUpload(): Promise<void> {
-  const uploadInput = getUploadInput();
-  const list = uploadInput.files;
-  const files = list ? Array.from(list) : [];
-  if (files.length === 0) {
-    return;
-  }
-  const path = normalizeRelativePath(getCurrentRoute().path);
-  const failed: string[] = [];
-  for (const file of files) {
-    try {
-      await getApi().upload(path, file);
-    } catch {
-      failed.push(file.name);
-    }
-  }
-  // Clear the input so selecting the same file again re-fires `change`.
-  uploadInput.value = '';
-  // Re-render the listing first so normal browse/search status is set.
-  await rerender();
-  // Surface failures after the normal render, so the message is not overwritten.
-  if (failed.length > 0) {
-    const succeeded = files.length - failed.length;
-    getStatus().textContent = `Uploaded ${succeeded} file(s); failed: ${failed.join(', ')}`;
-  }
-}
-
-/**
  * Open the native file picker and upload every selected file into `dirPath`
  * (an arbitrary directory, NOT necessarily the current route) — used by the
  * folder-row "Upload" and the current-directory context menus.
  *
- * This mirrors {@link handleUpload}'s per-file loop and failure surfacing but
- * uses a self-contained, transient `<input type="file" multiple>` instead of
- * the toolbar's shared upload input (whose `change` handler is hardwired to
- * the current route path). The transient input is appended hidden, clicked
- * (within the menu-item click's user gesture so the picker is allowed to
- * open), awaited until either `change` (files chosen) or `cancel` (dismissed),
- * then removed — so a cancel resolves cleanly with no upload and no leak.
+ * Uses a self-contained, transient `<input type="file" multiple>` appended
+ * hidden to body, clicked (within the menu-item click's user gesture so the
+ * picker is allowed to open), awaited until either `change` (files chosen) or
+ * `cancel` (dismissed), then removed — so a cancel resolves cleanly with no
+ * upload and no leak. Each file is uploaded in order; per-file failures are
+ * collected and surfaced in the status footer without aborting the rest.
  */
 export async function pickAndUploadInto(dirPath: string): Promise<void> {
   const input = document.createElement('input');

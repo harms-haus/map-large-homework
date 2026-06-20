@@ -61,6 +61,7 @@ function fileEntry(opts: Partial<FileEntry> & { name: string }): FileEntry {
     isDirectory: opts.isDirectory ?? false,
     size: opts.size ?? 0,
     lastModified: opts.lastModified ?? ISO,
+    itemCount: opts.itemCount ?? 0,
   };
 }
 
@@ -84,8 +85,6 @@ interface Ctx {
   toolbar: HTMLElement;
   breadcrumb: HTMLElement;
   searchInput: HTMLInputElement;
-  uploadLabel: HTMLLabelElement;
-  uploadInput: HTMLInputElement;
   results: HTMLElement;
   status: HTMLElement;
 }
@@ -108,8 +107,6 @@ function setup(options: { hash?: string } = {}): Ctx {
     toolbar: root.querySelector('.toolbar') as HTMLElement,
     breadcrumb: root.querySelector('.breadcrumb') as HTMLElement,
     searchInput: root.querySelector('input[type="text"]') as HTMLInputElement,
-    uploadLabel: root.querySelector('label.btn') as HTMLLabelElement,
-    uploadInput: root.querySelector('input[type="file"]') as HTMLInputElement,
     results: root.querySelector('.results') as HTMLElement,
     status: root.querySelector('.status') as HTMLElement,
   };
@@ -509,16 +506,14 @@ describe('startApp DOM ordering', () => {
     expect(kids[2].className).toBe('status');
   });
 
-  it('the toolbar holds breadcrumb, search-wrapper, and upload label in that order', () => {
+  it('the toolbar holds breadcrumb then search-wrapper (and nothing else)', () => {
     const { toolbar } = setup();
     const kids = Array.from(toolbar.children);
-    expect(kids).toHaveLength(3);
+    expect(kids).toHaveLength(2);
     expect(kids[0].tagName).toBe('DIV');
     expect(kids[0].className).toBe('breadcrumb');
     expect(kids[1].tagName).toBe('DIV');
     expect(kids[1].className).toBe('search-wrapper');
-    expect(kids[2].tagName).toBe('LABEL');
-    expect(kids[2].className).toBe('btn');
   });
 
   it('the root holds the embedded host, the trigger, then the dialog in that order', () => {
@@ -817,14 +812,15 @@ describe('cell content derivation', () => {
     expect(cells[2].textContent?.trim()).toBe(ISO_FMT);
   });
 
-  it('browse folder row: Size is an em-dash but Modified still shows formatDate(lastModified)', async () => {
-    // Only the Size column is folder-special (em-dash); the Modified column
-    // is populated the same way as for files, from the entry's lastModified.
-    const dir = fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true });
+  it('browse folder row: Size is the item count (blank when 0) but Modified still shows formatDate(lastModified)', async () => {
+    // Only the Size column is folder-special (its immediate-child count, blank
+    // when empty); the Modified column is populated the same way as for files,
+    // from the entry's lastModified.
+    const dir = fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true, itemCount: 7 });
     const { results } = await setupCleared();
     renderBrowse(browseResult({ path: 'docs', entries: [dir] }));
     const cells = cellsOf(rowByName(results.querySelector('table')!, 'sub'));
-    expect(cells[1].textContent?.trim()).toBe('—');
+    expect(cells[1].textContent?.trim()).toBe('7');
     expect(cells[2].textContent?.trim()).toBe(ISO_FMT);
     expect(cells[2].textContent?.trim()).toBe(formatDate(ISO));
   });

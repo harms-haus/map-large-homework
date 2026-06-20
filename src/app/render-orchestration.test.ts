@@ -10,7 +10,7 @@
  *
  * Environment: the project-default `happy-dom` (these tests need a DOM).
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { startApp, renderBrowse, renderSearch } from '../app';
 import type { SearchResult } from '../api';
 import { toBrowseHash, toSearchHash, navigate } from '../router';
@@ -542,25 +542,52 @@ describe('search loading spinner', () => {
     return { release };
   }
 
-  it('shows a spinner (.search-spinner with a spinning icon) while a search fetch is in flight', async () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does NOT show a spinner when a search resolves within 500ms (fast search)', async () => {
+    // A search that comes back quickly must never flash the loading spinner:
+    // the 500ms spinner timer is cleared before it ever fires.
+    const { results } = setup({ hash: toSearchHash('fast-query', '') });
+
+    // Advance to just under the 500ms threshold: the fast search resolves
+    // (microtask) and clears the spinner timer before it can fire.
+    await vi.advanceTimersByTimeAsync(499);
+    expect(results.querySelector('.search-spinner')).toBeNull();
+    expect(results.querySelector('table')).toBeTruthy();
+    expect(results.textContent).toContain('result-for-fast-query');
+
+    // Well past 500ms — the timer was already cleared, so still no spinner.
+    await vi.advanceTimersByTimeAsync(501);
+    expect(results.querySelector('.search-spinner')).toBeNull();
+  });
+
+  it('shows a spinner after 500ms while a search fetch is still in flight', async () => {
     const { release } = stubHeldSearch('slow-query');
     const { results } = setup({ hash: toSearchHash('slow-query', '') });
-    await flush(); // settle the initial browse render
 
-    // Navigate to the search — the fetch is held
-    navigate(toSearchHash('slow-query', ''));
-    await flush();
+    // Before the 500ms threshold: the held search is in flight but no spinner yet.
+    await vi.advanceTimersByTimeAsync(499);
+    expect(results.querySelector('.search-spinner')).toBeNull();
 
-    // The spinner should be visible in the results area
+    // At 500ms the search is still held, so the spinner appears.
+    await vi.advanceTimersByTimeAsync(1);
     const spinner = results.querySelector('.search-spinner');
-    expect(spinner, 'a .search-spinner element must exist during an in-flight search').toBeTruthy();
+    expect(
+      spinner,
+      'a .search-spinner element must appear after 500ms of an in-flight search',
+    ).toBeTruthy();
     const spinningIcon = spinner!.querySelector('.bi-arrow-repeat.spinning');
     expect(spinningIcon, 'the spinner must contain a .bi-arrow-repeat.spinning icon').toBeTruthy();
 
-    // Release the held fetch — results should render and the spinner should be gone
+    // Release the held fetch — results render and the spinner is removed.
     release();
-    await flush();
-
+    await vi.advanceTimersByTimeAsync(0);
     expect(results.querySelector('.search-spinner')).toBeNull();
     expect(results.querySelector('table')).toBeTruthy();
     expect(results.textContent).toContain('result-for-slow-query');
@@ -568,16 +595,17 @@ describe('search loading spinner', () => {
 
   it('does NOT show a spinner during browse fetches', async () => {
     const { results } = setup({ hash: toBrowseHash('docs') });
-    await flush();
-
+    await vi.advanceTimersByTimeAsync(1000);
     expect(results.querySelector('.search-spinner')).toBeNull();
   });
 
   it('removes the spinner when a search fetch fails (error message replaces it)', async () => {
     fetchMock.mockImplementation(async () => mockResponse({ status: 500, text: 'boom' }));
     const { results } = setup({ hash: toSearchHash('fail-query', '') });
-    await flush();
 
+    // The failing search resolves quickly (< 500ms), so no spinner shows; the
+    // error handler replaces the results content regardless.
+    await vi.advanceTimersByTimeAsync(1000);
     expect(results.querySelector('.search-spinner')).toBeNull();
     expect(results.textContent).toContain('Error');
   });
@@ -585,23 +613,23 @@ describe('search loading spinner', () => {
   it('a superseded search render does not leave a stale spinner', async () => {
     const { release } = stubHeldSearch('slow');
     const { results } = setup();
-    await flush();
+    await vi.advanceTimersByTimeAsync(1000); // settle the initial browse render
 
-    // Start a held search, then navigate away (browse) before it resolves
+    // Start a held search and let its spinner appear, then navigate away.
     navigate(toSearchHash('slow', ''));
-    await flush();
+    await vi.advanceTimersByTimeAsync(500);
     expect(results.querySelector('.search-spinner')).toBeTruthy();
 
     navigate(toBrowseHash('elsewhere'));
-    await flush();
+    await vi.advanceTimersByTimeAsync(0); // browse resolves and clears the results
 
-    // The browse render cleared the results; no spinner should remain
+    // The browse render cleared the results; no spinner should remain.
     expect(results.querySelector('.search-spinner')).toBeNull();
     expect(results.querySelector('table')).toBeTruthy();
 
-    // The slow search finally resolves — must not re-add a spinner or clobber
+    // The slow search finally resolves — must not re-add a spinner or clobber.
     release();
-    await flush();
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(results.querySelector('.search-spinner')).toBeNull();
     expect(results.textContent).toContain('child-of-elsewhere');

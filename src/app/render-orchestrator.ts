@@ -71,29 +71,48 @@ export async function render(): Promise<void> {
   const route = getCurrentRoute();
   const resultsEl = getResults();
   resultsEl.innerHTML = '';
-  // Show a spinner in the results container while a search fetch is in flight.
-  // For browse routes, no spinner is shown. The spinner is removed naturally:
-  // `renderSearch(result)` clears the container before building the table, and
-  // the error handler's `textContent` assignment replaces all content.
+  // Debounced spinner: a search fetch only shows a spinner if it is still in
+  // flight after 500ms, so fast searches never flash a loading indicator. The
+  // timer is cleared on every exit path (success, error, superseded), and its
+  // callback also bails if a newer render has claimed the slot — so a slower,
+  // superseded fetch can never re-add a stale spinner. For browse routes, no
+  // spinner is ever shown. When results do render, the spinner (if shown) is
+  // removed naturally: `renderSearch(result)` clears the container before
+  // building the table, and the error handler's `textContent` replaces all.
+  let spinnerTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearSpinnerTimer = (): void => {
+    if (spinnerTimer !== null) {
+      clearTimeout(spinnerTimer);
+      spinnerTimer = null;
+    }
+  };
   if (route.view === 'search') {
-    const spinnerWrap = document.createElement('div');
-    spinnerWrap.className = 'search-spinner';
-    const spinnerIcon = document.createElement('i');
-    spinnerIcon.className = 'bi bi-arrow-repeat spinning';
-    spinnerWrap.appendChild(spinnerIcon);
-    resultsEl.appendChild(spinnerWrap);
+    spinnerTimer = setTimeout(() => {
+      spinnerTimer = null;
+      // A newer render owns the slot — don't re-add a stale spinner.
+      if (myToken !== renderToken) return;
+      const spinnerWrap = document.createElement('div');
+      spinnerWrap.className = 'search-spinner';
+      const spinnerIcon = document.createElement('i');
+      spinnerIcon.className = 'bi bi-arrow-repeat spinning';
+      spinnerWrap.appendChild(spinnerIcon);
+      resultsEl.appendChild(spinnerWrap);
+    }, 500);
   }
   try {
     if (route.view === 'browse') {
       const result = await getApi().browse(normalizeRelativePath(route.path));
+      clearSpinnerTimer();
       if (myToken !== renderToken) return;
       renderBrowse(result);
     } else {
       const result = await getApi().search(route.query, normalizeRelativePath(route.path));
+      clearSpinnerTimer();
       if (myToken !== renderToken) return;
       renderSearch(result);
     }
   } catch (err) {
+    clearSpinnerTimer();
     // A superseded render must not even commit its error.
     if (myToken !== renderToken) return;
     // textContent replaces all children, so any stale table is removed too.

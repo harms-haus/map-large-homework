@@ -17,6 +17,19 @@ import { navigate, toBrowseHash } from '../router.js';
 import { getApi, getBreadcrumb, getStatus, rerender } from './context.js';
 import { pickAndUploadInto } from './toolbar-handlers.js';
 
+/**
+ * The text for a row's Size cell. Files show their byte size (formatBytes);
+ * directories show their immediate-child count (files + folders) — or blank
+ * when the count is zero, so an empty folder renders nothing rather than "0".
+ */
+function formatSizeColumn(entry: FileEntry): string {
+  if (entry.isDirectory) {
+    const count = entry.itemCount ?? 0;
+    return count > 0 ? String(count) : '';
+  }
+  return formatBytes(entry.size);
+}
+
 /* -------------------------------------------------------------------------
  * Row action menu open/close state
  *
@@ -504,9 +517,10 @@ export function makeBrowseRow(entry: FileEntry): HTMLTableRowElement {
     nameCell.textContent = entry.name;
   }
 
-  // Size — em-dash for folders, formatted bytes for files.
+  // Size — directories show their immediate-child count (blank when 0);
+  // files show their byte size.
   const sizeCell = document.createElement('td');
-  sizeCell.textContent = entry.isDirectory ? '—' : formatBytes(entry.size);
+  sizeCell.textContent = formatSizeColumn(entry);
 
   // Modified
   const modifiedCell = document.createElement('td');
@@ -636,9 +650,10 @@ export function makeSearchRow(entry: FileEntry): HTMLTableRowElement {
   const pathCell = document.createElement('td');
   pathCell.textContent = entry.path;
 
-  // Size
+  // Size — directories show their immediate-child count (blank when 0);
+  // files show their byte size.
   const sizeCell = document.createElement('td');
-  sizeCell.textContent = formatBytes(entry.size);
+  sizeCell.textContent = formatSizeColumn(entry);
 
   // Modified
   const modifiedCell = document.createElement('td');

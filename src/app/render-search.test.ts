@@ -108,4 +108,29 @@ describe('renderSearch', () => {
 
     expect(status.textContent).toContain('2 results for "foo"');
   });
+
+  it('renders a directory result with its immediate-child count in the Size cell (blank when 0)', async () => {
+    // Search rows share the Size-column contract with browse rows: a directory
+    // shows its child count (or blank when 0), not its (zero) byte size.
+    const dir = fileEntry({
+      name: 'matchdir',
+      path: 'docs/matchdir',
+      isDirectory: true,
+      itemCount: 4,
+    });
+    const emptyDir = fileEntry({
+      name: 'emptydir',
+      path: 'docs/emptydir',
+      isDirectory: true,
+      itemCount: 0,
+    });
+    const { results } = await setupCleared();
+    renderSearch({ query: 'match', path: '', results: [dir, emptyDir] });
+
+    const table = results.querySelector('table')!;
+    const dirSize = cellsOf(rowByName(table, 'matchdir')!)[2].textContent?.trim();
+    const emptySize = cellsOf(rowByName(table, 'emptydir')!)[2].textContent ?? '';
+    expect(dirSize).toBe('4');
+    expect(emptySize).toBe('');
+  });
 });
