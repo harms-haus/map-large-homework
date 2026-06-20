@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ----------------------------------------------------------------------- #
+  # Fast, OS-independent checks: lint + formatting (frontend + backend).    #
+  # ----------------------------------------------------------------------- #
+  lint-and-format:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Lint (oxlint)
+        run: npm run lint
+
+      - name: Check formatting (Prettier)
+        run: npm run format:check
+
+      - name: Check formatting (dotnet format)
+        # `dotnet format` must compile to analyze, so the MSBuild npm targets
+        # run here too — node_modules is already present from `npm ci`.
+        run: dotnet format TestProject.sln --verify-no-changes --severity warn
+
+  # ----------------------------------------------------------------------- #
+  # Build + tests on both Linux and Windows. The file service has           #
+  # platform-specific behaviour (Windows path handling, symlinks), so       #
+  # exercising both OSes catches regressions that Linux-only runs miss.     #
+  # ----------------------------------------------------------------------- #
+  build-and-test:
+    name: Build & Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Frontend tests (Vitest)
+        run: npm test
+
+      - name: Build solution
+        # Triggers the MSBuild npm target that compiles src/ -> wwwroot/dist.
+        run: dotnet build TestProject.sln -c Release
+
+      - name: Backend tests (xUnit)
+        run: dotnet test TestProject.sln -c Release --no-build

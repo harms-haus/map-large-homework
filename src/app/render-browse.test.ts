@@ -88,9 +88,7 @@ describe('renderBrowse', () => {
 
   it('clicking the ".." row navigates to toBrowseHash(result.parent)', async () => {
     const { results } = await setupCleared();
-    renderBrowse(
-      browseResult({ path: 'docs/sub', parent: 'docs', entries: [] }),
-    );
+    renderBrowse(browseResult({ path: 'docs/sub', parent: 'docs', entries: [] }));
     const parentRow = rowByName(results.querySelector('table')!, '..')!;
 
     clickNameLink(parentRow);
@@ -144,7 +142,11 @@ describe('renderBrowse', () => {
     });
 
     it('escapes names via textContent (no HTML injection)', async () => {
-      const evil = fileEntry({ name: '<img src=x onerror=alert(1)>', path: 'docs/x', isDirectory: false });
+      const evil = fileEntry({
+        name: '<img src=x onerror=alert(1)>',
+        path: 'docs/x',
+        isDirectory: false,
+      });
       const { results } = await setupCleared();
       renderBrowse(browseResult({ path: 'docs', entries: [evil] }));
 
@@ -180,9 +182,7 @@ describe('renderBrowse', () => {
 
     it('gives both files and folders Delete, Move, and Copy buttons', async () => {
       const { results } = await setupCleared();
-      renderBrowse(
-        browseResult({ path: 'docs', entries: [file, dir] }),
-      );
+      renderBrowse(browseResult({ path: 'docs', entries: [file, dir] }));
 
       for (const name of ['a.txt', 'sub']) {
         const actions = actionsCell(results, name);

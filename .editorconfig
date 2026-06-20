@@ -1,0 +1,31 @@
+# EditorConfig — https://editorconfig.org
+# Shared by editors, Prettier, and `dotnet format` so every tool agrees on
+# the same style. Root = true stops upward directory scanning.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+# .NET / C# — 4-space indent (SDK default). `dotnet format` enforces these.
+[*.{cs,csproj,props,targets}]
+indent_size = 4
+
+# C#-specific naming/spacing toggles. Keep it light: this mirrors the
+# defaults `dotnet new` produces so existing code passes without churn.
+[*.cs]
+# `dotnet format` only enforces rules listed under the dotnet_ diagnostics.
+dotnet_sort_system_directives_first = true
+
+[*.{ts,mts,cts,mjs,cjs,js,jsx,tsx,json,jsonc,css,scss,html,md,yml,yaml}]
+indent_size = 2
+
+# Generated / vendored content: leave line endings and whitespace alone.
+[SampleFiles/**]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset

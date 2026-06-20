@@ -131,7 +131,10 @@ describe('toolbar handlers', () => {
     function uploadedFileNames(): string[] {
       return fetchMock.mock.calls
         .filter(([u, init]) => String(u).includes('/upload') && (init?.method ?? 'GET') === 'POST')
-        .map(([, init]) => ((init?.body as FormData | undefined)?.get('file') as File | null)?.name ?? '');
+        .map(
+          ([, init]) =>
+            ((init?.body as FormData | undefined)?.get('file') as File | null)?.name ?? '',
+        );
     }
 
     /** Count of GET /browse calls observed so far. */
@@ -159,7 +162,9 @@ describe('toolbar handlers', () => {
         expect((init!.body as FormData).get('file')).toBeInstanceOf(File);
       }
       // All uploads target the current browse path.
-      expect(uploadCalls.every(([u]) => String(u).includes('path=' + encodeURIComponent('docs')))).toBe(true);
+      expect(
+        uploadCalls.every(([u]) => String(u).includes('path=' + encodeURIComponent('docs'))),
+      ).toBe(true);
       // The input is cleared afterwards.
       expect(uploadInput.value).toBe('');
       // And a re-render occurred (browse fetched again after upload).
@@ -174,9 +179,7 @@ describe('toolbar handlers', () => {
       uploadInput.dispatchEvent(new Event('change'));
       await flush();
 
-      expect(
-        fetchMock.mock.calls.some(([u]) => String(u).includes('/upload')),
-      ).toBe(false);
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/upload'))).toBe(false);
     });
 
     // ---- per-file error handling -------------------------------------------

@@ -12,13 +12,7 @@
  * `router.dom.test.ts`.
  */
 import { describe, it, expect } from 'vitest';
-import {
-  parseHash,
-  toBrowseHash,
-  toSearchHash,
-  type Route,
-  type View,
-} from './router';
+import { parseHash, toBrowseHash, toSearchHash, type Route, type View } from './router';
 
 const DEFAULT_ROUTE: Route = { view: 'browse', path: '', query: '' };
 
@@ -248,9 +242,7 @@ describe('toSearchHash', () => {
   });
 
   it('percent-encodes spaces in both query and path', () => {
-    expect(toSearchHash('hello world', 'my docs')).toBe(
-      '#/search?q=hello%20world&path=my%20docs',
-    );
+    expect(toSearchHash('hello world', 'my docs')).toBe('#/search?q=hello%20world&path=my%20docs');
   });
 
   it('encodes characters that would otherwise break the query string (& and =)', () => {

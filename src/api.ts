@@ -25,16 +25,15 @@ export class ApiClient {
   constructor(private readonly baseUrl: string = '/api/files') {}
 
   async browse(path: string): Promise<BrowseResult> {
-    return this.request<BrowseResult>(
-      `${this.baseUrl}/browse?path=${encodeURIComponent(path)}`,
-      { method: 'GET' }
-    );
+    return this.request<BrowseResult>(`${this.baseUrl}/browse?path=${encodeURIComponent(path)}`, {
+      method: 'GET',
+    });
   }
 
   async search(query: string, path: string): Promise<SearchResult> {
     return this.request<SearchResult>(
       `${this.baseUrl}/search?query=${encodeURIComponent(query)}&path=${encodeURIComponent(path)}`,
-      { method: 'GET' }
+      { method: 'GET' },
     );
   }
 
@@ -43,37 +42,30 @@ export class ApiClient {
     formData.append('file', file);
     return this.request<{ path: string }>(
       `${this.baseUrl}/upload?path=${encodeURIComponent(path)}`,
-      { method: 'POST', body: formData }
+      { method: 'POST', body: formData },
     );
   }
 
   async delete(path: string): Promise<void> {
-    await this.request<unknown>(
-      `${this.baseUrl}/delete?path=${encodeURIComponent(path)}`,
-      { method: 'DELETE' }
-    );
+    await this.request<unknown>(`${this.baseUrl}/delete?path=${encodeURIComponent(path)}`, {
+      method: 'DELETE',
+    });
   }
 
   async move(source: string, destination: string): Promise<void> {
-    await this.request<unknown>(
-      `${this.baseUrl}/move`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourcePath: source, destinationPath: destination }),
-      }
-    );
+    await this.request<unknown>(`${this.baseUrl}/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourcePath: source, destinationPath: destination }),
+    });
   }
 
   async copy(source: string, destination: string): Promise<void> {
-    await this.request<unknown>(
-      `${this.baseUrl}/copy`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourcePath: source, destinationPath: destination }),
-      }
-    );
+    await this.request<unknown>(`${this.baseUrl}/copy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourcePath: source, destinationPath: destination }),
+    });
   }
 
   downloadUrl(path: string): string {
@@ -83,8 +75,8 @@ export class ApiClient {
   private async request<T>(url: string, init?: RequestInit): Promise<T> {
     const res = await fetch(url, init);
     if (!res.ok) {
-      throw new Error(res.status + ': ' + await res.text());
+      throw new Error(res.status + ': ' + (await res.text()));
     }
-    return await res.json() as T;
+    return (await res.json()) as T;
   }
 }

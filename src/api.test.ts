@@ -31,7 +31,13 @@ describe('ApiClient', () => {
     it('GETs the browse endpoint with an encoded path and returns parsed JSON', async () => {
       const client = new ApiClient();
       const entries: FileEntry[] = [
-        { name: 'a.txt', path: '/root/a.txt', isDirectory: false, size: 10, lastModified: '2024-01-01T00:00:00Z' },
+        {
+          name: 'a.txt',
+          path: '/root/a.txt',
+          isDirectory: false,
+          size: 10,
+          lastModified: '2024-01-01T00:00:00Z',
+        },
       ];
       const result: BrowseResult = {
         path: '/root',
@@ -55,7 +61,9 @@ describe('ApiClient', () => {
     it('encodes special characters in the path', async () => {
       const client = new ApiClient();
       fetchMock.mockResolvedValueOnce(
-        mockResponse({ body: { path: '', parent: null, entries: [], folderCount: 0, fileCount: 0, totalSize: 0 } })
+        mockResponse({
+          body: { path: '', parent: null, entries: [], folderCount: 0, fileCount: 0, totalSize: 0 },
+        }),
       );
       const tricky = '/foo bar/baz?x=1&y=2';
       await client.browse(tricky);
@@ -82,7 +90,13 @@ describe('ApiClient', () => {
     it('GETs the search endpoint with encoded query and path and returns parsed JSON', async () => {
       const client = new ApiClient();
       const results: FileEntry[] = [
-        { name: 'match.txt', path: '/root/match.txt', isDirectory: false, size: 5, lastModified: '2024-02-02T00:00:00Z' },
+        {
+          name: 'match.txt',
+          path: '/root/match.txt',
+          isDirectory: false,
+          size: 5,
+          lastModified: '2024-02-02T00:00:00Z',
+        },
       ];
       const out: SearchResult = { query: 'mat', path: '/root', results };
       fetchMock.mockResolvedValueOnce(mockResponse({ body: out }));
@@ -91,7 +105,10 @@ describe('ApiClient', () => {
 
       const [url, init] = fetchMock.mock.calls[0];
       expect(url).toBe(
-        '/api/files/search?query=' + encodeURIComponent('mat') + '&path=' + encodeURIComponent('/root')
+        '/api/files/search?query=' +
+          encodeURIComponent('mat') +
+          '&path=' +
+          encodeURIComponent('/root'),
       );
       expect(init?.method).toBe('GET');
       expect(data).toEqual(out);
@@ -99,14 +116,14 @@ describe('ApiClient', () => {
 
     it('encodes special characters in both query and path', async () => {
       const client = new ApiClient();
-      fetchMock.mockResolvedValueOnce(
-        mockResponse({ body: { query: '', path: '', results: [] } })
-      );
+      fetchMock.mockResolvedValueOnce(mockResponse({ body: { query: '', path: '', results: [] } }));
       const q = 'a b&c';
       const p = '/dir x/y?z=1';
       await client.search(q, p);
       const [url] = fetchMock.mock.calls[0];
-      expect(url).toBe('/api/files/search?query=' + encodeURIComponent(q) + '&path=' + encodeURIComponent(p));
+      expect(url).toBe(
+        '/api/files/search?query=' + encodeURIComponent(q) + '&path=' + encodeURIComponent(p),
+      );
     });
 
     it('throws on non-2xx', async () => {
@@ -192,7 +209,10 @@ describe('ApiClient', () => {
       expect(init?.method).toBe('POST');
       const headers = init?.headers as Record<string, string>;
       expect(headers['Content-Type']).toBe('application/json');
-      expect(JSON.parse(init!.body as string)).toEqual({ sourcePath: '/a/b.txt', destinationPath: '/c/b.txt' });
+      expect(JSON.parse(init!.body as string)).toEqual({
+        sourcePath: '/a/b.txt',
+        destinationPath: '/c/b.txt',
+      });
       expect(result).toBeUndefined();
     });
 
@@ -223,7 +243,10 @@ describe('ApiClient', () => {
       expect(init?.method).toBe('POST');
       const headers = init?.headers as Record<string, string>;
       expect(headers['Content-Type']).toBe('application/json');
-      expect(JSON.parse(init!.body as string)).toEqual({ sourcePath: '/a/b.txt', destinationPath: '/c/b.txt' });
+      expect(JSON.parse(init!.body as string)).toEqual({
+        sourcePath: '/a/b.txt',
+        destinationPath: '/c/b.txt',
+      });
       expect(result).toBeUndefined();
     });
 
@@ -253,7 +276,9 @@ describe('ApiClient', () => {
     it('encodes special characters', () => {
       const client = new ApiClient();
       const tricky = '/a b/c?d=1&e=2';
-      expect(client.downloadUrl(tricky)).toBe('/api/files/download?path=' + encodeURIComponent(tricky));
+      expect(client.downloadUrl(tricky)).toBe(
+        '/api/files/download?path=' + encodeURIComponent(tricky),
+      );
     });
 
     it('respects a custom baseUrl', () => {

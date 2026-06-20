@@ -159,9 +159,7 @@ export function dataRows(table: Element): Element[] {
   return Array.from(table.querySelectorAll('tbody tr'));
 }
 export function rowByName(table: Element, name: string): Element | undefined {
-  return dataRows(table).find(
-    (tr) => (tr.querySelector('td')?.textContent ?? '').trim() === name,
-  );
+  return dataRows(table).find((tr) => (tr.querySelector('td')?.textContent ?? '').trim() === name);
 }
 export function cellsOf(row: Element): Element[] {
   return Array.from(row.querySelectorAll('td'));
@@ -187,9 +185,7 @@ export function buttonsByText(container: Element, text: string): HTMLButtonEleme
  * monolith did, with no per-file `let fetchMock` declaration.
  * ========================================================================= */
 
-export let fetchMock: ReturnType<typeof vi.fn> = vi.fn(async () =>
-  mockResponse({ body: {} }),
-);
+export let fetchMock: ReturnType<typeof vi.fn> = vi.fn(async () => mockResponse({ body: {} }));
 
 /**
  * Register the shared `beforeEach` (permissive default fetch stub) and
@@ -227,7 +223,12 @@ export function installAppTestLifecycle(): void {
           body: {
             query,
             path: '',
-            results: [fileEntry({ name: 'result-for-' + query, path: joinPathHelper('docs', 'result-for-' + query) })],
+            results: [
+              fileEntry({
+                name: 'result-for-' + query,
+                path: joinPathHelper('docs', 'result-for-' + query),
+              }),
+            ],
           } as SearchResult,
         });
       }

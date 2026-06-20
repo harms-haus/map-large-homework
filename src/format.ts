@@ -7,7 +7,7 @@
  */
 
 /** Binary (1024-based) byte-unit suffixes, from bytes up to terabytes. */
-const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
 
 /**
  * Format a byte count as a human-readable string using binary (1024-based)
@@ -20,22 +20,22 @@ const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
  * The unit caps at `TB`; values beyond 1024 TB remain expressed in terabytes.
  */
 export function formatBytes(bytes: number): string {
-    const units = BYTE_UNITS;
-    let value = bytes;
-    let unitIndex = 0;
+  const units = BYTE_UNITS;
+  let value = bytes;
+  let unitIndex = 0;
 
-    while (value >= 1024 && unitIndex < units.length - 1) {
-        value /= 1024;
-        unitIndex++;
-    }
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
 
-    if (unitIndex === 0) {
-        // Below the KB boundary: render as an integer byte count.
-        return `${Math.round(value)} ${units[unitIndex]}`;
-    }
+  if (unitIndex === 0) {
+    // Below the KB boundary: render as an integer byte count.
+    return `${Math.round(value)} ${units[unitIndex]}`;
+  }
 
-    // KB and above: one decimal place (trailing .0 preserved per spec).
-    return `${value.toFixed(1)} ${units[unitIndex]}`;
+  // KB and above: one decimal place (trailing .0 preserved per spec).
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
 }
 
 /**
@@ -49,11 +49,11 @@ export function formatBytes(bytes: number): string {
  * - empty/root input collapses to `""`
  */
 export function normalizeRelativePath(path: string): string {
-    return path
-        .replace(/\\/g, "/")
-        .split("/")
-        .filter((segment) => segment !== "" && segment !== "." && segment !== "..")
-        .join("/");
+  return path
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter((segment) => segment !== '' && segment !== '.' && segment !== '..')
+    .join('/');
 }
 
 /**
@@ -61,7 +61,7 @@ export function normalizeRelativePath(path: string): string {
  * result (see {@link normalizeRelativePath}).
  */
 export function joinPath(base: string, name: string): string {
-    return normalizeRelativePath(`${base}/${name}`);
+  return normalizeRelativePath(`${base}/${name}`);
 }
 
 /**
@@ -69,9 +69,9 @@ export function joinPath(base: string, name: string): string {
  * at root (empty or a single segment after normalization).
  */
 export function parentPath(path: string): string {
-    const normalized = normalizeRelativePath(path);
-    const lastSlash = normalized.lastIndexOf("/");
-    return lastSlash === -1 ? "" : normalized.slice(0, lastSlash);
+  const normalized = normalizeRelativePath(path);
+  const lastSlash = normalized.lastIndexOf('/');
+  return lastSlash === -1 ? '' : normalized.slice(0, lastSlash);
 }
 
 /**
@@ -79,14 +79,14 @@ export function parentPath(path: string): string {
  * path.
  */
 export function basename(path: string): string {
-    const normalized = normalizeRelativePath(path);
-    const lastSlash = normalized.lastIndexOf("/");
-    return lastSlash === -1 ? normalized : normalized.slice(lastSlash + 1);
+  const normalized = normalizeRelativePath(path);
+  const lastSlash = normalized.lastIndexOf('/');
+  return lastSlash === -1 ? normalized : normalized.slice(lastSlash + 1);
 }
 
 /** Left-pad a number to two digits with a leading zero. */
 function padTwo(value: number): string {
-    return String(value).padStart(2, "0");
+  return String(value).padStart(2, '0');
 }
 
 /**
@@ -95,20 +95,20 @@ function padTwo(value: number): string {
  * Returns `""` for empty or unparseable input instead of throwing.
  */
 export function formatDate(iso: string): string {
-    if (!iso) {
-        return "";
-    }
+  if (!iso) {
+    return '';
+  }
 
-    const date = new Date(iso);
-    if (Number.isNaN(date.getTime())) {
-        return "";
-    }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
 
-    const year = date.getFullYear();
-    const month = padTwo(date.getMonth() + 1);
-    const day = padTwo(date.getDate());
-    const hours = padTwo(date.getHours());
-    const minutes = padTwo(date.getMinutes());
+  const year = date.getFullYear();
+  const month = padTwo(date.getMonth() + 1);
+  const day = padTwo(date.getDate());
+  const hours = padTwo(date.getHours());
+  const minutes = padTwo(date.getMinutes());
 
-    return `${year}-${month}-${day} ${hours}:${minutes}`;
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
 }

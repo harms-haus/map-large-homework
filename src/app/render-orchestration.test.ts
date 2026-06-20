@@ -176,7 +176,11 @@ describe('render output depends only on result (route is irrelevant)', () => {
       let headers = Array.from(results.querySelectorAll('th')).map((h) => h.textContent!.trim());
       expect(headers).toEqual(['Name', 'Size', 'Modified', 'Actions']);
 
-      renderSearch({ query: 'q', path: '', results: [fileEntry({ name: 'a.txt', path: 'docs/a.txt' })] });
+      renderSearch({
+        query: 'q',
+        path: '',
+        results: [fileEntry({ name: 'a.txt', path: 'docs/a.txt' })],
+      });
       headers = Array.from(results.querySelectorAll('th')).map((h) => h.textContent!.trim());
       expect(headers).toEqual(['Name', 'Path', 'Size', 'Modified']);
       expect(status.textContent).toContain('1 results for "q"');
@@ -186,7 +190,11 @@ describe('render output depends only on result (route is irrelevant)', () => {
 
     it('renderBrowse after renderSearch swaps columns and status, leaving one table', async () => {
       const { results, status } = await setupCleared();
-      renderSearch({ query: 'q', path: '', results: [fileEntry({ name: 'a.txt', path: 'docs/a.txt' })] });
+      renderSearch({
+        query: 'q',
+        path: '',
+        results: [fileEntry({ name: 'a.txt', path: 'docs/a.txt' })],
+      });
       expect(status.textContent).toContain('1 results for "q"');
 
       renderBrowse(
@@ -219,7 +227,8 @@ describe('render orchestration', () => {
     expect(results.textContent).toContain('child-of-home');
     expect(
       fetchMock.mock.calls.some(
-        ([u]) => String(u).includes('/browse') && String(u).includes('path=' + encodeURIComponent('home')),
+        ([u]) =>
+          String(u).includes('/browse') && String(u).includes('path=' + encodeURIComponent('home')),
       ),
     ).toBe(true);
   });
@@ -310,7 +319,7 @@ describe('rendering lifecycle', () => {
       expect(hashchangeCalls(addSpy)).toHaveLength(3);
     });
 
-    it('unsubscribes the previous mount\'s hashchange listener on every re-mount', async () => {
+    it("unsubscribes the previous mount's hashchange listener on every re-mount", async () => {
       const addSpy = vi.spyOn(window, 'addEventListener');
       const removeSpy = vi.spyOn(window, 'removeEventListener');
 
@@ -342,9 +351,7 @@ describe('rendering lifecycle', () => {
      * Drive a browse render for `path` whose fetch is held open until the
      * caller invokes `release()`. All other browse paths resolve immediately.
      */
-    function stubHeldBrowse(
-      heldPath: string,
-    ): { release: () => void } {
+    function stubHeldBrowse(heldPath: string): { release: () => void } {
       let release!: () => void;
       const held = new Promise<Response>((resolve) => {
         release = () =>

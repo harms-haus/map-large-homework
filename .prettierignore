@@ -1,0 +1,19 @@
+# Build artifacts
+node_modules/
+.engin/
+wwwroot/
+bin/
+obj/
+dist/
+coverage/
+
+# Reference / sample data (do not reformat)
+SampleFiles/
+
+# Lockfiles & generated solution/project files
+package-lock.json
+*.sln
+*.csproj
+
+# Prettier can't parse these; C# is handled by `dotnet format`.
+*.cs

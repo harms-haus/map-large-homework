@@ -118,29 +118,35 @@ export function makeBrowseRow(entry: FileEntry): HTMLTableRowElement {
     download.textContent = 'Download';
     actionsCell.append(download);
   }
-  actionsCell.append(makeActionButton('Delete', async () => {
-    if (!window.confirm('Delete "' + entry.name + '"?')) {
-      return;
-    }
-    await getApi().delete(entry.path);
-    rerender();
-  }));
-  actionsCell.append(makeActionButton('Move', async () => {
-    const dest = window.prompt('Move to relative destination path:', entry.path);
-    if (dest === null) {
-      return;
-    }
-    await getApi().move(entry.path, normalizeRelativePath(dest));
-    rerender();
-  }));
-  actionsCell.append(makeActionButton('Copy', async () => {
-    const dest = window.prompt('Copy to relative destination path:', entry.path);
-    if (dest === null) {
-      return;
-    }
-    await getApi().copy(entry.path, normalizeRelativePath(dest));
-    rerender();
-  }));
+  actionsCell.append(
+    makeActionButton('Delete', async () => {
+      if (!window.confirm('Delete "' + entry.name + '"?')) {
+        return;
+      }
+      await getApi().delete(entry.path);
+      rerender();
+    }),
+  );
+  actionsCell.append(
+    makeActionButton('Move', async () => {
+      const dest = window.prompt('Move to relative destination path:', entry.path);
+      if (dest === null) {
+        return;
+      }
+      await getApi().move(entry.path, normalizeRelativePath(dest));
+      rerender();
+    }),
+  );
+  actionsCell.append(
+    makeActionButton('Copy', async () => {
+      const dest = window.prompt('Copy to relative destination path:', entry.path);
+      if (dest === null) {
+        return;
+      }
+      await getApi().copy(entry.path, normalizeRelativePath(dest));
+      rerender();
+    }),
+  );
 
   row.append(nameCell, sizeCell, modifiedCell, actionsCell);
   return row;

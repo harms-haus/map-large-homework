@@ -47,7 +47,7 @@ function mockResponse(opts: {
     ok,
     status,
     text: async () => text,
-    json: async () => (opts.body ?? {}),
+    json: async () => opts.body ?? {},
   } as unknown as Response;
 }
 
@@ -228,9 +228,7 @@ describe('buildTable (table structure)', () => {
     const table = results.querySelector('table')!;
     const theadRows = table.querySelectorAll('thead tr');
     expect(theadRows).toHaveLength(1);
-    const headers = Array.from(theadRows[0].querySelectorAll('th')).map(
-      (h) => h.textContent!,
-    );
+    const headers = Array.from(theadRows[0].querySelectorAll('th')).map((h) => h.textContent!);
     expect(headers).toEqual(['Name', 'Size', 'Modified', 'Actions']);
   });
 
@@ -332,9 +330,7 @@ describe('renderBreadcrumb (breadcrumb structure)', () => {
     // '//a//b//' normalizes to 'a/b' → Home, sep, a, sep, b (no empty links).
     const { breadcrumb } = await setupCleared();
     renderBrowse(browseResult({ path: '//a//b//', entries: [] }));
-    const texts = Array.from(breadcrumb.querySelectorAll('a')).map(
-      (a) => a.textContent,
-    );
+    const texts = Array.from(breadcrumb.querySelectorAll('a')).map((a) => a.textContent);
     expect(texts).toEqual(['Home', 'a', 'b']);
   });
 });
@@ -549,9 +545,7 @@ describe('startApp DOM ordering', () => {
 describe('status footer exact format', () => {
   it('renderBrowse: "N folders, M files, total S"', async () => {
     const { status } = await setupCleared();
-    renderBrowse(
-      browseResult({ path: 'docs', folderCount: 2, fileCount: 3, totalSize: 1536 }),
-    );
+    renderBrowse(browseResult({ path: 'docs', folderCount: 2, fileCount: 3, totalSize: 1536 }));
     expect(status.textContent).toBe('2 folders, 3 files, total ' + formatBytes(1536));
     expect(status.textContent).toBe('2 folders, 3 files, total 1.5 KB');
   });
@@ -584,9 +578,7 @@ describe('render error message exact format', () => {
   });
 
   it('surfaces the body text verbatim across multi-word error bodies', async () => {
-    fetchMock.mockImplementation(async () =>
-      mockResponse({ status: 404, text: 'not found here' }),
-    );
+    fetchMock.mockImplementation(async () => mockResponse({ status: 404, text: 'not found here' }));
     const { results } = setup();
     await flush();
     expect(results.textContent).toBe('Error: 404: not found here');
@@ -741,7 +733,9 @@ describe('search result link details (file vs directory)', () => {
     const link = rowByName(results.querySelector('table')!, 'match.txt')
       .querySelector('td')!
       .querySelector('a') as HTMLAnchorElement;
-    expect(link.getAttribute('href')).toBe('/api/files/download?path=' + encodeURIComponent('docs/match.txt'));
+    expect(link.getAttribute('href')).toBe(
+      '/api/files/download?path=' + encodeURIComponent('docs/match.txt'),
+    );
     expect(link.textContent).toBe('match.txt');
     // Distinct from the browse Download control: no .btn class, no download attr.
     expect(link.className).toBe('');

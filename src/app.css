@@ -3,9 +3,9 @@
 /* System font stack, reset body */
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
-    Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", Arial,
-    sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans',
+    'Droid Sans', 'Helvetica Neue', Arial, sans-serif;
   font-size: 14px;
   color: #e6e6e6;
   background: #1e1e1e;
@@ -171,10 +171,9 @@ body {
   text-decoration: none;
 }
 
-
 /* Search input */
-.toolbar input[type="search"],
-.toolbar input[type="text"] {
+.toolbar input[type='search'],
+.toolbar input[type='text'] {
   background: #333337;
   color: #e6e6e6;
   border: 1px solid #3c3c3c;
@@ -185,16 +184,14 @@ body {
   box-sizing: border-box;
   margin-left: auto;
 }
-.toolbar input[type="search"]::placeholder,
-.toolbar input[type="text"]::placeholder {
+.toolbar input[type='search']::placeholder,
+.toolbar input[type='text']::placeholder {
   color: #9a9a9a;
 }
-.toolbar input[type="search"]:focus,
-.toolbar input[type="text"]:focus {
+.toolbar input[type='search']:focus,
+.toolbar input[type='text']:focus {
   border-color: #6aa6ff;
 }
-
-
 
 /* ── Results container (scrollable) ──
    Grows to fill its host's remaining height (flex: 1) and scrolls when the
@@ -234,8 +231,6 @@ body {
   background: #2d2d30;
 }
 
-
-
 /* ── Small action buttons ── */
 .btn {
   display: inline-flex;
@@ -259,6 +254,29 @@ body {
 }
 .btn:disabled:hover {
   background: #3a3d41;
+}
+
+/* ── Upload control accessibility ──
+   The Upload file input is visually hidden with the sr-only clip pattern so it
+   stays in the tab order and is keyboard-focusable (WCAG 2.1.1) — using the
+   `hidden` attribute (UA display:none) instead would eject it from the focus
+   order. The wrapping <label class="btn"> remains the visible affordance; the
+   clipped input's own focus outline is invisible, so :focus-within reflects
+   focus onto the label for sighted keyboard users. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.toolbar label.btn:focus-within {
+  outline: 2px solid #6aa6ff;
+  outline-offset: 2px;
 }
 
 /* ── Status footer ── */

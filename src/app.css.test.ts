@@ -61,7 +61,9 @@ describe('src/app.css — native <dialog> visibility contract', () => {
     const open = ruleDeclarations(/\.browser-dialog\[open\]/);
     expect(open, 'a .browser-dialog[open] { ... } rule must exist').not.toBeNull();
     expect(/display\s*:\s*flex/.test(open!), 'open dialog must use display:flex').toBe(true);
-    expect(/flex-direction\s*:\s*column/.test(open!), 'open dialog must be a flex column').toBe(true);
+    expect(/flex-direction\s*:\s*column/.test(open!), 'open dialog must be a flex column').toBe(
+      true,
+    );
   });
 });
 

@@ -85,8 +85,7 @@ export async function render(): Promise<void> {
     // A superseded render must not even commit its error.
     if (myToken !== renderToken) return;
     // textContent replaces all children, so any stale table is removed too.
-    resultsEl.textContent = err instanceof Error
-      ? 'Error: ' + err.message
-      : 'Error: ' + String(err);
+    resultsEl.textContent =
+      err instanceof Error ? 'Error: ' + err.message : 'Error: ' + String(err);
   }
 }

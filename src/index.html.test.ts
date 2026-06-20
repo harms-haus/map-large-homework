@@ -81,7 +81,17 @@ function isLightColor(value: string): boolean {
     if (!nums || nums.length < 3) return false;
     [r, g, b] = nums.map(Number);
   } else if (
-    ['white', 'whitesmoke', 'aliceblue', 'azure', 'ivory', 'snow', 'seashell', 'floralwhite', 'mintcream'].includes(v)
+    [
+      'white',
+      'whitesmoke',
+      'aliceblue',
+      'azure',
+      'ivory',
+      'snow',
+      'seashell',
+      'floralwhite',
+      'mintcream',
+    ].includes(v)
   ) {
     return true;
   } else {
@@ -194,7 +204,9 @@ describe('wwwroot/index.html — <noscript> fallback', () => {
   it('uses only plain text — no interactive controls or scripts inside <noscript>', () => {
     // A fallback shown when scripting is off cannot rely on buttons, links,
     // forms, or scripts. Allow text + simple structural tags only.
-    expect(/<(button|a|input|form|select|textarea|script|iframe|object|embed)\b/i.test(noscriptInner)).toBe(false);
+    expect(
+      /<(button|a|input|form|select|textarea|script|iframe|object|embed)\b/i.test(noscriptInner),
+    ).toBe(false);
   });
 
   it('styles the message so it is visible against the dark theme background', () => {
@@ -210,6 +222,9 @@ describe('wwwroot/index.html — <noscript> fallback', () => {
     expect(colorMatch, 'inline style must set a foreground `color`').not.toBeNull();
 
     const colorValue = colorMatch![1].trim();
-    expect(isLightColor(colorValue), `color "${colorValue}" must be light enough to read on #1e1e1e`).toBe(true);
+    expect(
+      isLightColor(colorValue),
+      `color "${colorValue}" must be light enough to read on #1e1e1e`,
+    ).toBe(true);
   });
 });

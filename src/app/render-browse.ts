@@ -18,8 +18,10 @@ export function renderBrowse(result: BrowseResult): void {
 
   // Status footer: "N folders, M files, total S"
   getStatus().textContent =
-    result.folderCount + ' folders, ' +
-    result.fileCount + ' files, total ' +
+    result.folderCount +
+    ' folders, ' +
+    result.fileCount +
+    ' files, total ' +
     formatBytes(result.totalSize);
 
   // Results table

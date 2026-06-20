@@ -80,8 +80,17 @@ export function startApp(root: HTMLElement): void {
   uploadLabel.textContent = 'Upload';
   const uploadInput = document.createElement('input');
   uploadInput.type = 'file';
-  uploadInput.hidden = true;
   uploadInput.multiple = true;
+  // Visually hidden via the sr-only clip pattern (the `visually-hidden`
+  // class) rather than the `hidden` HTML attribute: the attribute's UA
+  // `display:none` ejects the control from the tab order, leaving Upload
+  // unreachable via keyboard (WCAG 2.1.1). The class clips it to a 1x1 box
+  // so it stays focusable; the visible "Upload" affordance is this wrapping
+  // label.btn, and `.toolbar label.btn:focus-within` reflects focus onto it.
+  uploadInput.classList.add('visually-hidden');
+  // The input is now the element Tab lands on, so it needs its own accessible
+  // name (the label text alone doesn't name a focusable input reliably).
+  uploadInput.setAttribute('aria-label', 'Upload files');
   uploadLabel.append(uploadInput);
   toolbar.append(breadcrumbEl, searchInput, searchBtn, uploadLabel);
 

@@ -36,6 +36,6 @@ export function mockResponse(opts: MockResponseOptions): Response {
     ok,
     status,
     text: async () => text,
-    json: async () => (opts.body ?? (opts.text ? JSON.parse(opts.text) : {})),
+    json: async () => opts.body ?? (opts.text ? JSON.parse(opts.text) : {}),
   } as unknown as Response;
 }

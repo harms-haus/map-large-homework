@@ -44,9 +44,7 @@ installAppTestLifecycle();
 describe('renderSearch', () => {
   it('builds a table with header Name | Path | Size | Modified', async () => {
     const { results } = await setupCleared();
-    renderSearch(
-      { query: 'foo', path: '', results: [] },
-    );
+    renderSearch({ query: 'foo', path: '', results: [] });
 
     const table = results.querySelector('table');
     expect(table).toBeTruthy();
@@ -102,16 +100,11 @@ describe('renderSearch', () => {
 
   it('shows the result count and query in the status footer', async () => {
     const { status } = await setupCleared();
-    renderSearch(
-      {
-        query: 'foo',
-        path: '',
-        results: [
-          fileEntry({ name: 'a.txt' }),
-          fileEntry({ name: 'b.txt' }),
-        ],
-      },
-    );
+    renderSearch({
+      query: 'foo',
+      path: '',
+      results: [fileEntry({ name: 'a.txt' }), fileEntry({ name: 'b.txt' })],
+    });
 
     expect(status.textContent).toContain('2 results for "foo"');
   });
