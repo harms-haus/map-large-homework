@@ -27,6 +27,31 @@ public sealed class FileService : IFileService
     /// </summary>
     private const int MaxCopyDepth = 32;
 
+    /// <summary>
+    /// Characters disallowed in a stored file name on any supported platform.
+    /// This is the union of <see cref="Path.GetInvalidFileNameChars"/> (which
+    /// is platform-specific — on Linux it returns only NUL and '/') with the
+    /// Windows-only separators and metacharacters, so a name accepted on Linux
+    /// is guaranteed to be acceptable on Windows too. Without this, an upload
+    /// like <c>report:2024.txt</c> succeeds on Linux but throws on Windows.
+    /// </summary>
+    private static readonly char[] s_invalidFileNameChars = Path.GetInvalidFileNameChars()
+        .Concat(new[] { '\\', '/', ':', '*', '?', '"', '<', '>', '|' })
+        .Distinct()
+        .ToArray();
+
+    /// <summary>
+    /// File-name stems that Windows reserves regardless of extension (e.g.
+    /// <c>CON.txt</c> is reserved just like <c>CON</c>). Rejected on every
+    /// platform so an upload accepted on Linux cannot fail on Windows.
+    /// </summary>
+    private static readonly HashSet<string> s_reservedWindowsDeviceNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    };
+
     private readonly Lazy<string> _rootLazy;
 
     public FileService(IOptions<FileServiceOptions> options, IWebHostEnvironment env)
@@ -165,7 +190,15 @@ public sealed class FileService : IFileService
                         LastModified: info.LastWriteTimeUtc));
                 }
 
-                stack.Push(dir);
+                // Do not descend into reparse points (symbolic links on
+                // Linux/macOS, directory junctions/symlinks on Windows): they
+                // may target a location outside the home sandbox, and following
+                // them would let Search enumerate content beyond the root. The
+                // link is still eligible to appear as a match above.
+                if (!IsReparsePoint(info))
+                {
+                    stack.Push(dir);
+                }
             }
 
             foreach (var file in files)
@@ -200,7 +233,15 @@ public sealed class FileService : IFileService
         var dir = SafeResolve(relativeDirPath);
         Directory.CreateDirectory(dir);
 
-        var path = Path.Combine(dir, file.FileName);
+        // The uploaded file name is untrusted client input. Reduce it to its
+        // final, safe segment and validate it (see PrepareUploadedFileName)
+        // before it is combined with the sandboxed directory. This blocks path
+        // traversal ("../x", "..\x") on both platforms and rejects names that
+        // are illegal on Windows, so an upload accepted on Linux cannot fail
+        // when the app is deployed to Windows.
+        var fileName = PrepareUploadedFileName(file.FileName);
+        var path = Path.Combine(dir, fileName);
+
         await using var fs = File.Create(path);
         await file.CopyToAsync(fs);
     }
@@ -208,38 +249,48 @@ public sealed class FileService : IFileService
     /// <summary>
     /// Deletes the file or directory (recursively) at <paramref name="relativePath"/>.
     /// Deleting a non-existent path succeeds silently — the post-condition
-    /// (entry gone) is already met. This is achieved without an up-front
-    /// <c>Exists</c> check, eliminating the check-then-act (TOCTOU) window in
-    /// which a concurrent delete could cause a spurious
-    /// <see cref="DirectoryNotFoundException"/>: the delete is attempted, and
-    /// a missing-path outcome is treated as success rather than a failure.
+    /// (entry gone) is already met.
     /// </summary>
+    /// <remarks>
+    /// Dispatch is driven by existence checks rather than by the exception
+    /// type thrown by <see cref="Directory.Delete(string, bool)"/>, because
+    /// that type is platform-dependent: on Linux deleting a path that is a
+    /// file (or missing) throws <see cref="DirectoryNotFoundException"/>, but
+    /// on Windows deleting an existing file throws <see cref="IOException"/>
+    /// ("A file with the same name and location specified by path exists").
+    /// A narrow race remains — a directory removed between
+    /// <see cref="Directory.Exists(string)"/> and the delete call — but it is
+    /// swallowed, so the worst case is a benign no-op rather than a spurious
+    /// error.
+    /// </remarks>
     public void Delete(string relativePath)
     {
         var path = SafeResolve(relativePath);
 
-        try
+        if (Directory.Exists(path))
         {
             try
             {
-                // Attempt the directory delete first. On a real file (or a
-                // missing path) this throws DirectoryNotFoundException, which
-                // is the signal to fall through to the file form.
                 Directory.Delete(path, recursive: true);
             }
             catch (DirectoryNotFoundException)
             {
-                // Not a directory (or already gone). File.Delete is itself a
-                // no-op when the target file is absent.
-                File.Delete(path);
+                // Vanished between the existence check and the delete (a
+                // concurrent removal). The post-condition — the entry is
+                // gone — already holds, so swallow the race.
             }
+            return;
         }
-        catch (DirectoryNotFoundException)
+
+        if (File.Exists(path))
         {
-            // Both the directory and file forms reported the path (or an
-            // ancestor) as absent. The post-condition — the entry no longer
-            // exists — is satisfied, so treat this as success.
+            // File.Delete is a documented no-op when the target is
+            // concurrently removed, so no equivalent race guard is needed.
+            File.Delete(path);
         }
+        // else: neither a directory nor a file — already absent (including
+        // the case where the parent directory never existed), which satisfies
+        // the idempotent "entry gone" post-condition without touching disk.
     }
 
     /// <inheritdoc />
@@ -363,6 +414,62 @@ public sealed class FileService : IFileService
     }
 
     /// <summary>
+    /// Reduces an untrusted uploaded file name to its final, safe segment and
+    /// validates it. Leading directory components are stripped by treating
+    /// both '/' and '\' as separators (a backslash is a separator on Windows
+    /// but a literal character on Linux, so handling both closes the
+    /// cross-platform traversal gap), and the resulting name is rejected when
+    /// it is empty, contains a character invalid on Windows, or matches a
+    /// reserved Windows device name. The returned name contains no separators
+    /// and is therefore safe to combine with an already-sandboxed directory.
+    /// </summary>
+    private static string PrepareUploadedFileName(string? rawFileName)
+    {
+        var segment = (rawFileName ?? string.Empty)
+            .Replace('\\', '/')
+            .Split('/')
+            .LastOrDefault(s => s.Length > 0 && s != "." && s != "..")
+            ?? string.Empty;
+
+        // Trim surrounding whitespace. Windows strips leading/trailing spaces
+        // (and dots) from file names at the filesystem layer, so a name that is
+        // only whitespace cannot exist there; trimming everywhere keeps Linux
+        // consistent and reduces a whitespace-only name to the empty string,
+        // which is rejected below.
+        segment = segment.Trim();
+
+        if (segment.Length == 0)
+        {
+            throw new ArgumentException("Invalid file name");
+        }
+
+        if (segment.IndexOfAny(s_invalidFileNameChars) >= 0)
+        {
+            throw new ArgumentException("File name contains invalid characters");
+        }
+
+        // Windows reserves device names like "CON" even with an extension
+        // ("CON.txt"), so test the stem before the first dot.
+        var dot = segment.IndexOf('.');
+        var stem = dot < 0 ? segment : segment[..dot];
+        if (s_reservedWindowsDeviceNames.Contains(stem))
+        {
+            throw new ArgumentException("File name is reserved");
+        }
+
+        return segment;
+    }
+
+    /// <summary>
+    /// Determines whether the given file-system entry is a reparse point (a
+    /// symbolic link on Linux/macOS, a symbolic link or directory junction on
+    /// Windows). The attributes of the entry itself are inspected — not those
+    /// of its target — so the link is never followed.
+    /// </summary>
+    private static bool IsReparsePoint(FileSystemInfo info)
+        => (info.Attributes & FileAttributes.ReparsePoint) != 0;
+
+    /// <summary>
     /// Recursively copies a directory tree, preserving structure. Existing
     /// files are not overwritten, matching the no-overwrite contract of
     /// <see cref="File.Copy(string, string, bool)"/>. The recursion is bounded
@@ -386,11 +493,28 @@ public sealed class FileService : IFileService
 
         foreach (var file in Directory.GetFiles(source))
         {
+            // Skip reparse points (e.g. symlinked files): File.Copy follows
+            // the link and would copy the target's contents, which may live
+            // outside the home sandbox. Such entries are not reproduced.
+            if (IsReparsePoint(new FileInfo(file)))
+            {
+                continue;
+            }
+
             File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), overwrite: false);
         }
 
         foreach (var directory in Directory.GetDirectories(source))
         {
+            // Skip reparse points (symbolic links / junctions to
+            // directories): recursing into them would follow the link and copy
+            // content from outside the home sandbox. The link entry itself is
+            // not reproduced in the destination.
+            if (IsReparsePoint(new DirectoryInfo(directory)))
+            {
+                continue;
+            }
+
             CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)), depth + 1);
         }
     }

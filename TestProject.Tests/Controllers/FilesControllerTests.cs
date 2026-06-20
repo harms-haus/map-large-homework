@@ -43,10 +43,9 @@ public class FilesControllerTests
 
         // Subtypes that must be caught by virtue of inheritance. The catch
         // list names base types (ArgumentException, IOException), so derived
-        // exceptions must ALSO resolve to 400. A refactor that switched to
-        // exact-type matching (e.g. `switch (ex.GetType())`) would let these
-        // leak through as unhandled — these cases pin the inheritance-based
-        // contract that the extracted helper must preserve.
+        // exceptions must ALSO resolve to 400; exact-type matching would let
+        // these leak through as unhandled. These cases pin the
+        // inheritance-based contract of the shared helper.
         yield return new object[] { new ArgumentNullException("p", "argnull-message") };
         yield return new object[] { new ArgumentOutOfRangeException("p", "argoor-message") };
         yield return new object[] { new PathTooLongException("pathtoolong-message") };
@@ -68,8 +67,8 @@ public class FilesControllerTests
     /// Asserts that <paramref name="value"/> exposes exactly one public
     /// property, named <paramref name="expectedName"/>, and returns it for
     /// further type/value assertions. Used to pin the *exact* payload shape
-    /// of the Ok/BadRequest anonymous bodies so a refactor cannot silently
-    /// add, rename, drop, or retyped a field.
+    /// of the Ok/BadRequest anonymous bodies against added, renamed, dropped,
+    /// or retyped fields.
     /// </summary>
     private static PropertyInfo AssertSingleProperty(object value, string expectedName)
     {
@@ -455,6 +454,27 @@ public class FilesControllerTests
         Assert.Equal(path, fake.UploadDirPath);
     }
 
+    [Theory]
+    [InlineData("../report.txt", "report.txt")]      // traversal stripped to last segment
+    [InlineData("../../report.txt", "report.txt")]
+    [InlineData("/report.txt", "report.txt")]
+    public async Task Upload_ResponsePath_StripsTraversalFromFileName(string fileName, string expected)
+    {
+        // The response must reflect the safe final segment the service stores,
+        // not the raw (possibly traversal-laden) file name submitted by the
+        // client. The service itself stores only that segment; the response is
+        // normalized to match.
+        var fake = new FakeFileService();
+        var controller = CreateController(fake);
+        var file = FormFileFactory.CreateFormFile(fileName, "payload");
+
+        var result = await controller.Upload(string.Empty, file);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(StatusCodes.Status200OK, ok.StatusCode);
+        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
+    }
+
     // =====================================================================
     // Download
     // =====================================================================
@@ -522,8 +542,7 @@ public class FilesControllerTests
     // The provider's mapping is immutable and the controller must not alter it,
     // so the following characterization tests pin down the exact content-type
     // resolution (known extensions, case-insensitivity, the octet-stream
-    // fallback and determinism across calls) that any caching refactor must
-    // preserve bit-for-bit.
+    // fallback and determinism across calls).
 
     [Theory]
     [InlineData(".txt", "text/plain")]
@@ -783,18 +802,16 @@ public class FilesControllerTests
     // =====================================================================
     // Non-translated exceptions must propagate from EVERY endpoint.
     //
-    // The refactor extracts the per-endpoint try/catch into a single shared
-    // helper. The single most dangerous failure mode for that change is the
-    // helper accidentally widening the catch list (a stray `catch (Exception
-    // ex)` or `when (...)` filter, or catching a base type too eagerly) —
-    // which would silently turn every fault into a 400. Only Delete is
-    // covered above; the tests below pin the same "unhandled exception
-    // bubbles out" guarantee for the remaining six endpoints.
+    // The shared Execute/ExecuteAsync helper must not widen the catch list —
+    // a stray `catch (Exception ex)` or `when (...)` filter, or catching a
+    // base type too eagerly, would silently turn every fault into a 400.
+    // Only Delete is covered above; the tests below pin the same "unhandled
+    // exception bubbles out" guarantee for the remaining six endpoints.
     //
-    // The Upload case is async on purpose: if the helper fails to await the
-    // body and instead unwraps via `.Result`/`.Wait()`, the throw would
-    // surface as `AggregateException` rather than the original
-    // `InvalidOperationException`, failing the assertion.
+    // The Upload case is async on purpose: the async helper must await the
+    // body rather than unwrap via `.Result`/`.Wait()`, which would surface
+    // the throw as `AggregateException` instead of the
+    // `InvalidOperationException` the assertion expects.
     // =====================================================================
 
     [Fact]
@@ -856,9 +873,8 @@ public class FilesControllerTests
     // Error payload shape: each translated exception must yield a 400 whose
     // body is *exactly* `{ error: <message> }` — a single property, no more.
     // The per-endpoint tests above read `GetProperty(value, "error")` to
-    // check the value, but never assert that `error` is the *only* field, so
-    // a refactor that swapped in ProblemDetails or appended extra metadata
-    // would slip past them. These pin the exact shape.
+    // check the value, but never assert that `error` is the *only* field.
+    // These pin the exact shape.
     // =====================================================================
 
     [Fact]
@@ -906,7 +922,7 @@ public class FilesControllerTests
         // subtypes — must map to the *same* 400 status. None should leak
         // through as 500 or pick up a different code. Exercises the catch
         // list uniformly through one endpoint to pin the shared status-code
-        // contract the extracted helper must honor.
+        // contract of the shared helper.
         var fake = new FakeFileService { DeleteException = ex };
         var controller = CreateController(fake);
 
@@ -921,11 +937,9 @@ public class FilesControllerTests
     // Success-payload shape for the Ok bodies.
     //
     // Delete/Move/Copy return Ok(new { success = true }) and Upload returns
-    // Ok(new { path = ... }). The existing happy-path tests read individual
-    // properties but never assert that the property set is *exactly*
-    // { success } or { path }, so a refactor that appended extra fields
-    // (e.g. { success = true, deleted = true }) or retyped `success` would
-    // not be caught. These pin the exact single-field shape and types.
+    // Ok(new { path = ... }). The happy-path tests read individual properties
+    // but never assert that the property set is *exactly* { success } or
+    // { path }. These pin the exact single-field shape and types.
     // =====================================================================
 
     [Fact]
@@ -986,12 +1000,11 @@ public class FilesControllerTests
     }
 
     // =====================================================================
-    // The extracted Execute/ExecuteAsync helpers must run the endpoint body
-    // exactly once. A buggy helper that retried or double-invoked the
-    // delegate would silently double every service side effect while
-    // producing an identical response — invisible to the existing tests,
-    // which only inspect the final result. These pin single-invocation by
-    // counting calls on a dedicated double.
+    // The Execute/ExecuteAsync helpers must run the endpoint body exactly
+    // once. A helper that retried or double-invoked the delegate would
+    // silently double every service side effect while producing an identical
+    // response — invisible to tests that only inspect the final result. These
+    // pin single-invocation by counting calls on a dedicated double.
     // =====================================================================
 
     [Fact]

@@ -40,6 +40,17 @@ Relative paths resolve under the app content root. The folder is created automat
 - **Search results are capped at 500.** Search stops collecting matches once it reaches 500 results, so a broad query may return fewer entries than actually exist. Narrow the query or scope it to a subfolder to see additional matches.
 - **Directory copy is limited to 32 levels of nesting.** Copying a tree nested more than 32 levels deep aborts with an IOException whose message is `Directory copy depth limit exceeded (possible cycle)`, to guard against stack overflow on pathological or self-referential directory trees.
 
+## File name handling
+
+Uploaded file names are sanitized before they touch disk, and the rules are enforced identically on every platform so an upload that works on Linux is also valid on Windows:
+
+- **Directory components are stripped.** A submitted name like `../x` or `..\x` is reduced to its final segment (`x`), so an upload can never traverse out of its target directory. Both `/` and `\` are treated as separators.
+- **Windows-incompatible names are rejected** with a `400 Bad Request`: names containing characters invalid on Windows (`< > : " | ? * \ /`) or matching a reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, with or without an extension).
+
+## Symlinks and junctions
+
+Search and copy never follow symbolic links (Linux/macOS) or directory junctions (Windows). A link is still listed by name in browse and search results, but its contents are never scanned or copied, so a link that targets a location outside the home directory cannot leak external files into a search or copy.
+
 ## Deep Linking
 
 The app keeps its current view and location in the URL hash, so any folder listing or search result can be bookmarked or shared as a direct link.

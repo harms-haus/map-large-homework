@@ -79,6 +79,32 @@ public class FileServiceTests : IDisposable
         return current;
     }
 
+    // Creates a directory symbolic link, returning false when the host cannot
+    // create one (e.g. Windows without the SeCreateSymbolicLinkPrivilege), so
+    // the reparse-point-skipping tests can opt out cleanly instead of failing.
+    private static bool TryCreateDirectorySymlink(string linkPath, string target)
+    {
+        try
+        {
+            return Directory.CreateSymbolicLink(linkPath, target) is not null;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+        catch (PlatformNotSupportedException) { return false; }
+    }
+
+    // File-symlink counterpart of TryCreateDirectorySymlink.
+    private static bool TryCreateFileSymlink(string linkPath, string target)
+    {
+        try
+        {
+            return File.CreateSymbolicLink(linkPath, target) is not null;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+        catch (PlatformNotSupportedException) { return false; }
+    }
+
     // =====================================================================
     // Constructor / root computation
     // =====================================================================
@@ -140,16 +166,12 @@ public class FileServiceTests : IDisposable
     // Two complementary flavors of test live here:
     //   1. The *negative* (lazy-specific) characterization below — the home
     //      directory must NOT exist on disk immediately after construction.
-    //      This is what distinguishes lazy creation from the legacy eager
-    //      `Directory.CreateDirectory(root)` that ran in the constructor, and
-    //      it is the observable behavior the README's Configuration section
-    //      documents ("created automatically on first use (lazily), ... so a
-    //      misconfigured path surfaces on the first request rather than at
-    //      startup"). These tests FAIL the moment creation moves back into
-    //      the constructor, which would also make the README wording stale.
+    //      Root creation is deferred to first use via the lazy value factory,
+    //      matching the README's Configuration section ("created automatically
+    //      on first use (lazily), ... so a misconfigured path surfaces on the
+    //      first request rather than at startup").
     //   2. The *positive* (agnostic) characterization further down — the
-    //      directory MUST exist after the first operation, regardless of
-    //      whether creation happens eagerly or lazily.
+    //      directory MUST exist after the first operation.
     // =====================================================================
 
     /// <summary>
@@ -157,10 +179,7 @@ public class FileServiceTests : IDisposable
     /// creation is deferred to first use via the lazy value factory, so
     /// constructing the service — equivalent to DI resolution at startup —
     /// has no filesystem side effects. This is the negative half of the lazy
-    /// contract and is the assertion that proves the README's old "created
-    /// automatically on startup" wording was wrong: an eager constructor
-    /// that called <c>Directory.CreateDirectory(root)</c> would make this
-    /// test fail.
+    /// contract.
     /// </summary>
     [Fact]
     public void Constructor_DoesNotCreateRootDirectory_BeforeFirstUse()
@@ -188,9 +207,7 @@ public class FileServiceTests : IDisposable
     /// its ancestor segments created by the constructor either. Lazy
     /// creation means neither the intermediate <c>Data</c> directory nor the
     /// leaf <c>Data/Files</c> exists until the first operation targets the
-    /// root. This guards against an eager constructor whose
-    /// <c>Directory.CreateDirectory</c> would materialize the whole chain at
-    /// startup.
+    /// root.
     /// </summary>
     [Fact]
     public void Constructor_DoesNotCreateNestedHomeDirectory_BeforeFirstUse()
@@ -218,14 +235,11 @@ public class FileServiceTests : IDisposable
     /// A misconfigured home directory (here, one containing an illegal null
     /// character) must NOT surface at construction time. The path is only
     /// resolved inside the lazy value factory, so the error is deferred to
-    /// the first file-system operation that touches <c>Root</c>. This is the
-    /// "a misconfigured path surfaces on the first request rather than at
-    /// startup" half of the README's lazy-creation wording: an eager
-    /// constructor that resolved and created the path up front would throw
-    /// here instead of on first use. The null byte is the only invalid-path
-    /// character that <see cref="Path.GetFullPath"/> rejects on every
-    /// platform (on Linux, characters like <c>&lt;&gt;</c> and <c>:</c> are
-    /// legal), so it is used for cross-platform determinism.
+    /// the first file-system operation that touches <c>Root</c>. The null
+    /// byte is the only invalid-path character that
+    /// <see cref="Path.GetFullPath"/> rejects on every platform (on Linux,
+    /// characters like <c>&lt;&gt;</c> and <c>:</c> are legal), so it is used
+    /// for cross-platform determinism.
     /// </summary>
     [Fact]
     public void Constructor_MisconfiguredHomeDirectory_DoesNotThrowUntilFirstUse()
@@ -244,10 +258,7 @@ public class FileServiceTests : IDisposable
 
     /// <summary>
     /// With lazy initialization, every public entry point that resolves a
-    /// path must materialize the home directory on first use. These checks
-    /// are written so they stay green whether the directory is created in the
-    /// constructor (legacy) or on first access (lazy): in both cases the
-    /// directory must exist after the call returns.
+    /// path must materialize the home directory on first use.
     /// </summary>
     [Theory]
     [InlineData("Resolve")]
@@ -305,9 +316,7 @@ public class FileServiceTests : IDisposable
     public void Constructor_NormalizesHomeDirectory_ToFullPath()
     {
         // A home directory containing a redundant "." segment must normalize
-        // (via Path.GetFullPath) to the same root as the clean path. The lazy
-        // value factory must compute the identical normalized path the ctor
-        // previously produced eagerly.
+        // (via Path.GetFullPath) to the same root as the clean path.
         var (service, _) = CreateService("Data/./Files");
         var expected = Path.GetFullPath(Path.Combine(_contentRoot, "Data", "Files"));
 
@@ -486,10 +495,8 @@ public class FileServiceTests : IDisposable
 
     // ---------------------------------------------------------------------
     // Additional characterization tests for Browse. These pin down the exact
-    // observable output contract of the directory enumeration so that the
-    // single-pass refactor (replacing the separate GetDirectories/GetFiles
-    // traversals with one EnumerateFileSystemInfos pass) can be verified to
-    // preserve ordering, per-entry metadata, and aggregations.
+    // observable output contract of the directory enumeration: ordering,
+    // per-entry metadata, and aggregations.
     // ---------------------------------------------------------------------
 
     [Fact]
@@ -667,15 +674,13 @@ public class FileServiceTests : IDisposable
     // ---------------------------------------------------------------------
     // Characterization tests for parent-path computation (the private static
     // ComputeParent helper, reachable only through Browse). These pin down
-    // the Parent field across every path depth so a rewrite delegating to
-    // Path.GetDirectoryName can be verified to preserve the exact contract:
+    // the Parent field across every path depth:
     //   - root (empty/whitespace)            -> null
     //   - single segment ("docs")            -> ""   (direct child of root)
     //   - two segments ("docs/reports")      -> "docs"
     //   - three+ segments ("a/b/c")          -> "a/b"
     // The 3+ segment cases and the special-character segment cases below are
-    // not covered elsewhere; they are the most likely to regress under a
-    // LastIndexOf/Substring -> Path.GetDirectoryName swap.
+    // the most sensitive to how ComputeParent splits the path.
     // ---------------------------------------------------------------------
 
     [Fact]
@@ -797,6 +802,30 @@ public class FileServiceTests : IDisposable
         Assert.Throws<ArgumentException>(() => service.Search("x", "../escape"));
     }
 
+    [Fact]
+    public async Task Search_DoesNotDescendIntoDirectorySymlinks()
+    {
+        var (service, root) = CreateService();
+        service.ResolveFullPath("");
+
+        // A directory that lives inside the content root but OUTSIDE the home
+        // sandbox root. If Search followed the symlink it would find this file
+        // (a sandbox escape); the reparse-point guard must prevent that.
+        var externalDir = Path.Combine(_contentRoot, "external_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalDir);
+        await File.WriteAllTextAsync(Path.Combine(externalDir, "leakmatch.txt"), "x");
+
+        var linkPath = Path.Combine(root, "link");
+        if (!TryCreateDirectorySymlink(linkPath, externalDir))
+        {
+            return; // symbolic links unavailable on this host
+        }
+
+        var result = service.Search("leakmatch", "");
+
+        Assert.DoesNotContain(result.Results, r => r.Name == "leakmatch.txt");
+    }
+
     // =====================================================================
     // UploadAsync
     // =====================================================================
@@ -832,6 +861,100 @@ public class FileServiceTests : IDisposable
         var file = FormFileFactory.CreateFormFile("a.txt", "x");
 
         await Assert.ThrowsAsync<ArgumentException>(() => service.UploadAsync("../escape", file));
+    }
+
+    // ---------------------------------------------------------------------
+    // File-name sanitization and validation. The uploaded file name is
+    // untrusted input: it must be reduced to a safe final segment (blocking
+    // path traversal on both platforms) and rejected when it contains
+    // characters illegal on Windows or matches a reserved Windows device
+    // name, so an upload accepted on Linux cannot break when deployed to
+    // Windows.
+    // ---------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("../pwned.txt")]
+    [InlineData("../../pwned.txt")]
+    [InlineData("/pwned.txt")]
+    [InlineData("sub/../pwned.txt")]
+    [InlineData("sub/../../pwned.txt")]
+    [InlineData("..\\pwned.txt")]      // backslash traversal (separator on Windows)
+    [InlineData("..\\..\\pwned.txt")]
+    [InlineData("docs\\sub\\pwned.txt")]
+    public async Task UploadAsync_StripsDirectoryTraversal_FromFileName(string fileName)
+    {
+        var (service, root) = CreateService();
+        var file = FormFileFactory.CreateFormFile(fileName, "payload");
+
+        await service.UploadAsync("", file);
+
+        // Only the final safe segment is stored, inside the root.
+        var stored = Path.Combine(root, "pwned.txt");
+        Assert.True(File.Exists(stored));
+        Assert.Equal("payload", await File.ReadAllTextAsync(stored));
+
+        // And nothing escaped above the root.
+        Assert.False(File.Exists(Path.Combine(Directory.GetParent(root)!.FullName, "pwned.txt")));
+    }
+
+    [Fact]
+    public async Task UploadAsync_PreservesFileName_WhenAlreadySafe()
+    {
+        var (service, root) = CreateService();
+        var file = FormFileFactory.CreateFormFile("report (final)-v2.txt", "x");
+
+        await service.UploadAsync("docs", file);
+
+        Assert.True(File.Exists(Path.Combine(root, "docs", "report (final)-v2.txt")));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(".")]
+    [InlineData("..")]
+    [InlineData("/")]
+    [InlineData("\\")]
+    [InlineData("///")]
+    [InlineData("./")]
+    [InlineData("../..")]
+    public async Task UploadAsync_RejectsFileName_ThatReducesToEmpty(string fileName)
+    {
+        var (service, _) = CreateService();
+        var file = FormFileFactory.CreateFormFile(fileName, "payload");
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UploadAsync("", file));
+    }
+
+    [Theory]
+    [InlineData("a:b.txt")]     // colon: legal on Linux, illegal on Windows
+    [InlineData("a*b.txt")]
+    [InlineData("a?b.txt")]
+    [InlineData("a\"b.txt")]
+    [InlineData("a<b.txt")]
+    [InlineData("a>b.txt")]
+    [InlineData("a|b.txt")]
+    public async Task UploadAsync_RejectsFileName_WithWindowsInvalidCharacters(string fileName)
+    {
+        var (service, _) = CreateService();
+        var file = FormFileFactory.CreateFormFile(fileName, "payload");
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UploadAsync("", file));
+    }
+
+    [Theory]
+    [InlineData("CON")]
+    [InlineData("CON.txt")]
+    [InlineData("nul.log")]
+    [InlineData("PRN")]
+    [InlineData("com1.dat")]
+    [InlineData("LPT9")]
+    public async Task UploadAsync_RejectsReservedWindowsDeviceNames(string fileName)
+    {
+        var (service, _) = CreateService();
+        var file = FormFileFactory.CreateFormFile(fileName, "payload");
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UploadAsync("", file));
     }
 
     // =====================================================================
@@ -909,15 +1032,12 @@ public class FileServiceTests : IDisposable
     }
 
     /// <summary>
-    /// Pins down the post-fix contract for the TOCTOU race in <c>Delete</c>.
-    /// The legacy check-then-act body throws
-    /// <see cref="DirectoryNotFoundException"/> here: <c>Directory.Delete</c>
-    /// fails because the path is absent, and the fall-through
-    /// <c>File.Delete</c> *also* fails because the parent directory is
-    /// missing. This mirrors the exact failure mode of the race (the entry
-    /// vanishes between the <c>Exists</c> check and the delete call), so the
-    /// race-free replacement — which must treat "already gone" as success —
-    /// is required to make this test pass.
+    /// Deleting a path whose parent directory does not exist must succeed
+    /// silently. Under the existence-based dispatch in <c>Delete</c>, such a
+    /// path is neither <see cref="Directory.Exists(string)"/> nor
+    /// <see cref="File.Exists(string)"/>, so the method is an idempotent
+    /// no-op and never touches the disk — the "entry gone" post-condition
+    /// already holds.
     /// </summary>
     [Fact]
     public void Delete_NonExistentNestedPath_SucceedsSilently()
@@ -987,10 +1107,8 @@ public class FileServiceTests : IDisposable
     }
 
     /// <summary>
-    /// The destination parent-creation step (the line that previously used the
-    /// null-forgiving operator) must materialize the full parent chain when the
-    /// destination lives several levels deep. This pins down that behavior so
-    /// the safe-pattern refactor cannot regress normal parent creation.
+    /// The destination parent-creation step must materialize the full parent
+    /// chain when the destination lives several levels deep.
     /// </summary>
     [Fact]
     public async Task Move_CreatesDeeplyNestedDestinationParentDirectories()
@@ -1073,16 +1191,14 @@ public class FileServiceTests : IDisposable
     /// source and destination resolve to the home root, which is configured as
     /// the filesystem root so <see cref="Path.GetDirectoryName"/> returns null
     /// — <see cref="FileService.Move"/> must throw a clear
-    /// <see cref="ArgumentException"/> rather than the opaque
-    /// <see cref="ArgumentNullException"/> that
-    /// <c>Directory.CreateDirectory(null!)</c> produced before the fix.
+    /// <see cref="ArgumentException"/> rather than an opaque
+    /// <see cref="ArgumentNullException"/> from
+    /// <c>Directory.CreateDirectory(null!)</c>.
     /// </summary>
     /// <remarks>
-    /// This is a specification test for the null-forgiving-operator fix: it
-    /// asserts the post-fix behavior and is expected to FAIL against the
-    /// unfixed code, which throws <see cref="ArgumentNullException"/> (a
-    /// subclass of <see cref="ArgumentException"/>, hence the strict type
-    /// check below).
+    /// Specification test: the thrown exception must be a plain
+    /// <see cref="ArgumentException"/>, not an <see cref="ArgumentNullException"/>
+    /// (a subclass), hence the strict type check below.
     /// </remarks>
     [Fact]
     public void Move_DestinationParentIsFileSystemRoot_ThrowsArgumentExceptionNotArgumentNull()
@@ -1101,10 +1217,8 @@ public class FileServiceTests : IDisposable
         var ex = Assert.Throws<ArgumentException>(() =>
             service.Move(new MoveRequest("", "")));
 
-        // The fix throws a plain ArgumentException with a clear message. The
-        // old code threw ArgumentNullException (a subclass of ArgumentException)
-        // from Directory.CreateDirectory(null!); reject that explicitly so the
-        // test fails until the fix is applied.
+        // Must be a plain ArgumentException with a clear message — not an
+        // ArgumentNullException that Directory.CreateDirectory(null!) would raise.
         Assert.IsNotType<ArgumentNullException>(ex);
         Assert.DoesNotContain("Value cannot be null", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("destination", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -1276,6 +1390,68 @@ public class FileServiceTests : IDisposable
         Assert.True(File.Exists(Path.Combine(sourceLeaf, "leaf.txt")));
         Assert.True(File.Exists(Path.Combine(sourceDir, "top.txt")));
         Assert.Equal("top", await File.ReadAllTextAsync(Path.Combine(sourceDir, "top.txt")));
+    }
+
+    // =====================================================================
+    // Copy — reparse points (symbolic links / junctions)
+    //
+    // CopyDirectory must NOT follow reparse points: a symlink or junction may
+    // target a location outside the home sandbox, and following it would pull
+    // external content into the copy. Such entries are skipped (not
+    // reproduced). These tests create a link whose target lives outside the
+    // home root (but inside the per-test content root, so it is cleaned up by
+    // Dispose) and assert the linked content is not copied.
+    // =====================================================================
+
+    [Fact]
+    public async Task Copy_DoesNotFollowDirectorySymlinks()
+    {
+        var (service, root) = CreateService();
+        Directory.CreateDirectory(Path.Combine(root, "src"));
+        await File.WriteAllTextAsync(Path.Combine(root, "src", "kept.txt"), "x");
+
+        // External content the symlink targets. If CopyDirectory followed the
+        // link, leak.txt would be pulled into the destination.
+        var externalDir = Path.Combine(_contentRoot, "external_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalDir);
+        await File.WriteAllTextAsync(Path.Combine(externalDir, "leak.txt"), "leaked");
+
+        var linkPath = Path.Combine(root, "src", "link");
+        if (!TryCreateDirectorySymlink(linkPath, externalDir))
+        {
+            return; // symbolic links unavailable on this host
+        }
+
+        service.Copy(new CopyRequest("src", "dst"));
+
+        Assert.True(File.Exists(Path.Combine(root, "dst", "kept.txt")));
+        // The linked external file was NOT pulled in...
+        Assert.False(File.Exists(Path.Combine(root, "dst", "link", "leak.txt")));
+        // ...and the reparse-point entry is not reproduced at all.
+        Assert.False(Directory.Exists(Path.Combine(root, "dst", "link")));
+    }
+
+    [Fact]
+    public async Task Copy_DoesNotFollowFileSymlinks()
+    {
+        var (service, root) = CreateService();
+        Directory.CreateDirectory(Path.Combine(root, "src"));
+        await File.WriteAllTextAsync(Path.Combine(root, "src", "kept.txt"), "x");
+
+        var externalFile = Path.Combine(_contentRoot, "ext_" + Guid.NewGuid().ToString("N") + ".txt");
+        await File.WriteAllTextAsync(externalFile, "leaked");
+
+        var linkPath = Path.Combine(root, "src", "link.txt");
+        if (!TryCreateFileSymlink(linkPath, externalFile))
+        {
+            return; // symbolic links unavailable on this host
+        }
+
+        service.Copy(new CopyRequest("src", "dst"));
+
+        Assert.True(File.Exists(Path.Combine(root, "dst", "kept.txt")));
+        // The symlinked external file was NOT followed/copied.
+        Assert.False(File.Exists(Path.Combine(root, "dst", "link.txt")));
     }
 
     // =====================================================================

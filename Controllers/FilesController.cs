@@ -74,7 +74,13 @@ public class FilesController : ControllerBase
         {
             await _service.UploadAsync(path ?? string.Empty, file);
             var dir = NormalizeRelativePath(path ?? string.Empty);
-            var resultPath = string.IsNullOrEmpty(dir) ? file.FileName : $"{dir}/{file.FileName}";
+            // The file name is normalized too: the service stores only the
+            // safe final segment (see FileService.UploadAsync), so the
+            // response must reflect that same segment rather than echo back
+            // the raw — possibly path-like or traversal-laden — input.
+            var fileName = NormalizeRelativePath(file.FileName);
+            var resultPath = string.Join('/',
+                new[] { dir, fileName }.Where(s => s.Length > 0));
             return Ok(new { path = resultPath });
         });
 
