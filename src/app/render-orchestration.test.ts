@@ -465,3 +465,145 @@ describe('rendering lifecycle', () => {
     });
   });
 });
+
+/* ===========================================================================
+ * Search loading spinner
+ *
+ * `render()` shows a spinner (a `.search-spinner` div wrapping a
+ * `.bi-arrow-repeat.spinning` icon) in the results container while a SEARCH
+ * fetch is in flight, and never for a browse route. It is removed once the
+ * search table renders (renderSearch clears `innerHTML` first) or, on failure,
+ * once the error handler sets `textContent`. The existing race-token guard
+ * also keeps a superseded search render from re-adding a stale spinner.
+ * ========================================================================= */
+describe('search loading spinner', () => {
+  /**
+   * Drive a search render for `query` whose fetch is held open until the
+   * caller invokes `release()`. All other requests resolve immediately.
+   */
+  function stubHeldSearch(heldQuery: string): { release: () => void } {
+    let release!: () => void;
+    const held = new Promise<Response>((resolve) => {
+      release = () =>
+        resolve(
+          mockResponse({
+            body: {
+              query: heldQuery,
+              path: '',
+              results: [
+                fileEntry({
+                  name: 'result-for-' + heldQuery,
+                  path: joinPathHelper('docs', 'result-for-' + heldQuery),
+                }),
+              ],
+            } as SearchResult,
+          }),
+        );
+    });
+
+    fetchMock.mockImplementation(async (url, init) => {
+      const u = String(url);
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'GET' && u.includes('/search')) {
+        const afterQuery = u.slice(u.indexOf('query=') + 6);
+        const query = decodeURIComponent(afterQuery.split('&')[0]);
+        if (query === heldQuery) {
+          return held;
+        }
+        return mockResponse({
+          body: {
+            query,
+            path: '',
+            results: [
+              fileEntry({
+                name: 'result-for-' + query,
+                path: joinPathHelper('docs', 'result-for-' + query),
+              }),
+            ],
+          } as SearchResult,
+        });
+      }
+      if (method === 'GET' && u.includes('/browse')) {
+        const raw = u.split('path=')[1] ?? '';
+        const path = decodeURIComponent(raw);
+        const childName = 'child-of-' + (path || 'root');
+        return mockResponse({
+          body: browseResult({
+            path,
+            entries: [fileEntry({ name: childName, path: joinPathHelper(path, childName) })],
+            fileCount: 1,
+            totalSize: 10,
+          }),
+        });
+      }
+      return mockResponse({ status: 200, body: {} });
+    });
+
+    return { release };
+  }
+
+  it('shows a spinner (.search-spinner with a spinning icon) while a search fetch is in flight', async () => {
+    const { release } = stubHeldSearch('slow-query');
+    const { results } = setup({ hash: toSearchHash('slow-query', '') });
+    await flush(); // settle the initial browse render
+
+    // Navigate to the search — the fetch is held
+    navigate(toSearchHash('slow-query', ''));
+    await flush();
+
+    // The spinner should be visible in the results area
+    const spinner = results.querySelector('.search-spinner');
+    expect(spinner, 'a .search-spinner element must exist during an in-flight search').toBeTruthy();
+    const spinningIcon = spinner!.querySelector('.bi-arrow-repeat.spinning');
+    expect(spinningIcon, 'the spinner must contain a .bi-arrow-repeat.spinning icon').toBeTruthy();
+
+    // Release the held fetch — results should render and the spinner should be gone
+    release();
+    await flush();
+
+    expect(results.querySelector('.search-spinner')).toBeNull();
+    expect(results.querySelector('table')).toBeTruthy();
+    expect(results.textContent).toContain('result-for-slow-query');
+  });
+
+  it('does NOT show a spinner during browse fetches', async () => {
+    const { results } = setup({ hash: toBrowseHash('docs') });
+    await flush();
+
+    expect(results.querySelector('.search-spinner')).toBeNull();
+  });
+
+  it('removes the spinner when a search fetch fails (error message replaces it)', async () => {
+    fetchMock.mockImplementation(async () => mockResponse({ status: 500, text: 'boom' }));
+    const { results } = setup({ hash: toSearchHash('fail-query', '') });
+    await flush();
+
+    expect(results.querySelector('.search-spinner')).toBeNull();
+    expect(results.textContent).toContain('Error');
+  });
+
+  it('a superseded search render does not leave a stale spinner', async () => {
+    const { release } = stubHeldSearch('slow');
+    const { results } = setup();
+    await flush();
+
+    // Start a held search, then navigate away (browse) before it resolves
+    navigate(toSearchHash('slow', ''));
+    await flush();
+    expect(results.querySelector('.search-spinner')).toBeTruthy();
+
+    navigate(toBrowseHash('elsewhere'));
+    await flush();
+
+    // The browse render cleared the results; no spinner should remain
+    expect(results.querySelector('.search-spinner')).toBeNull();
+    expect(results.querySelector('table')).toBeTruthy();
+
+    // The slow search finally resolves — must not re-add a spinner or clobber
+    release();
+    await flush();
+
+    expect(results.querySelector('.search-spinner')).toBeNull();
+    expect(results.textContent).toContain('child-of-elsewhere');
+  });
+});

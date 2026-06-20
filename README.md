@@ -51,6 +51,10 @@ Uploaded file names are sanitized before they touch disk, and the rules are enfo
 
 Search and copy never follow symbolic links (Linux/macOS) or directory junctions (Windows). A link is still listed by name in browse and search results, but its contents are never scanned or copied, so a link that targets a location outside the home directory cannot leak external files into a search or copy.
 
+## Search
+
+Search is instant and debounced. As you type in the search box, a query fires ~200 ms after you stop typing — no separate Search button to click. Enter submits the current query immediately. Escape clears the query and returns to browse. When the input has text, a clear (✕) button appears inside it; click it (or clear the input) to reset the query. While a search request is in flight, a spinner is shown in the results area.
+
 ## Deep Linking
 
 The app keeps its current view and location in the URL hash, so any folder listing or search result can be bookmarked or shared as a direct link.
@@ -85,4 +89,4 @@ dotnet test TestProject.Tests/TestProject.Tests.csproj
 10. **Delete** — Delete action removes files/folders after confirmation.
 11. **Move** — Move action renames/relocates entries via a prompt.
 12. **Copy** — Copy action duplicates entries via a prompt.
-13. **Search** — Search input and button filter entries recursively by name.
+13. **Search** — The search input filters entries recursively by name with instant, debounced (200 ms) search-as-you-type; pressing Enter submits immediately, pressing Escape clears the query and returns to browse, the in-input ✕ clear button resets the query, and a spinner shows in the results area while a search fetch is in flight.

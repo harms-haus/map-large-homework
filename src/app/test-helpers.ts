@@ -95,7 +95,9 @@ export interface SetupCtx {
   closeBtn: HTMLButtonElement;
   breadcrumb: HTMLElement;
   searchInput: HTMLInputElement;
-  searchBtn: HTMLButtonElement;
+  searchWrapper: HTMLElement;
+  searchClearBtn: HTMLButtonElement;
+  searchIcon: HTMLElement;
   uploadLabel: HTMLLabelElement;
   uploadInput: HTMLInputElement;
   results: HTMLElement;
@@ -116,11 +118,6 @@ export function setup(options: { hash?: string } = {}): SetupCtx {
   document.body.append(root);
   startApp(root);
 
-  const button = (text: string): HTMLButtonElement | undefined =>
-    Array.from(root.querySelectorAll('button')).find(
-      (b) => (b.textContent ?? '').trim() === text,
-    ) as HTMLButtonElement | undefined;
-
   return {
     root,
     embeddedHost: root.querySelector('.file-browser-host') as HTMLElement,
@@ -130,7 +127,9 @@ export function setup(options: { hash?: string } = {}): SetupCtx {
     closeBtn: root.querySelector('.close-btn') as HTMLButtonElement,
     breadcrumb: root.querySelector('.breadcrumb') as HTMLElement,
     searchInput: root.querySelector('input[type="text"]') as HTMLInputElement,
-    searchBtn: button('Search') as HTMLButtonElement,
+    searchWrapper: root.querySelector('.search-wrapper') as HTMLElement,
+    searchClearBtn: root.querySelector('.search-wrapper .clear-btn') as HTMLButtonElement,
+    searchIcon: root.querySelector('.search-wrapper .search-icon') as HTMLElement,
     uploadLabel: root.querySelector('label.btn') as HTMLLabelElement,
     uploadInput: root.querySelector('input[type="file"]') as HTMLInputElement,
     results: root.querySelector('.results') as HTMLElement,

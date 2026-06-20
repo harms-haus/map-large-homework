@@ -814,6 +814,121 @@ describe('renderBrowse', () => {
       });
     });
 
+    describe('arrow-key / Home / End item navigation (WAI-ARIA menu pattern)', () => {
+      // A role="menu" advertises the WAI-ARIA Menu Button keyboard contract:
+      // ArrowDown/ArrowUp move focus between menu items (wrapping at the
+      // ends), and Home/End jump to the first/last item. Each test opens the
+      // file row menu — whose items in order are Download<a>, Delete, Move,
+      // Copy — then EXPLICITLY focuses a known starting item before dispatching
+      // the key, so the assertion isolates the KEY handler rather than the
+      // separate focus-on-open behavior. The key is dispatched on the same
+      // document keydown listener that already handles Escape (see the
+      // 'pressing Escape closes an open menu' test above).
+      const itemsOf = (menu: HTMLElement): HTMLElement[] =>
+        Array.from(menu.children) as HTMLElement[];
+
+      /** Open the file row menu via its ⋮ button and return its items. */
+      async function openFileMenu(): Promise<HTMLElement[]> {
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+        const actions = actionsOf(results, 'a.txt');
+        menuBtnOf(actions).click();
+        const menu = menuOf(actions);
+        expect(menu.hidden).toBe(false);
+        return itemsOf(menu);
+      }
+
+      /** Dispatch one menu-navigation key on the open menu's keydown listener. */
+      function pressMenuKey(key: string): KeyboardEvent {
+        const evt = new KeyboardEvent('keydown', { key, cancelable: true });
+        document.dispatchEvent(evt);
+        return evt;
+      }
+
+      it('ArrowDown moves focus from the first menu item to the second', async () => {
+        const items = await openFileMenu();
+        items[0].focus();
+        expect(document.activeElement).toBe(items[0]);
+
+        const evt = pressMenuKey('ArrowDown');
+
+        // Advanced from Download (index 0) to Delete (index 1).
+        expect(document.activeElement).toBe(items[1]);
+        expect((items[1].textContent ?? '').trim()).toBe('Delete');
+        // Handled keys call preventDefault so they do not scroll the page.
+        expect(evt.defaultPrevented).toBe(true);
+      });
+
+      it('ArrowUp wraps focus from the first item back to the last', async () => {
+        const items = await openFileMenu();
+        items[0].focus();
+        expect(document.activeElement).toBe(items[0]);
+
+        const evt = pressMenuKey('ArrowUp');
+
+        // Wraps past the first item (index 0) around to the last (Copy).
+        expect(document.activeElement).toBe(items[items.length - 1]);
+        expect((items[items.length - 1].textContent ?? '').trim()).toBe('Copy');
+        expect(evt.defaultPrevented).toBe(true);
+      });
+
+      it('Home moves focus to the first menu item', async () => {
+        const items = await openFileMenu();
+        // Seed focus on the last item so Home has a visible effect.
+        items[items.length - 1].focus();
+        expect(document.activeElement).toBe(items[items.length - 1]);
+
+        const evt = pressMenuKey('Home');
+
+        expect(document.activeElement).toBe(items[0]);
+        expect((items[0].textContent ?? '').trim()).toBe('Download');
+        expect(evt.defaultPrevented).toBe(true);
+      });
+
+      it('End moves focus to the last menu item', async () => {
+        const items = await openFileMenu();
+        items[0].focus();
+        expect(document.activeElement).toBe(items[0]);
+
+        const evt = pressMenuKey('End');
+
+        expect(document.activeElement).toBe(items[items.length - 1]);
+        expect((items[items.length - 1].textContent ?? '').trim()).toBe('Copy');
+        expect(evt.defaultPrevented).toBe(true);
+      });
+
+      it('ArrowDown traverses every item and wraps from last back to first', async () => {
+        // Full forward round-trip: 0 → 1 → 2 → 3 → 0 (wraps past the last).
+        const items = await openFileMenu();
+        items[0].focus();
+
+        pressMenuKey('ArrowDown');
+        expect(document.activeElement).toBe(items[1]);
+        pressMenuKey('ArrowDown');
+        expect(document.activeElement).toBe(items[2]);
+        pressMenuKey('ArrowDown');
+        expect(document.activeElement).toBe(items[3]);
+        pressMenuKey('ArrowDown');
+        expect(document.activeElement).toBe(items[0]);
+      });
+
+      it('Escape still closes the menu after arrow/Home/End handling is added', async () => {
+        // Guards against the new key handling accidentally swallowing Escape.
+        const { results } = await setupCleared();
+        renderBrowse(browseResult({ path: 'docs', entries: [file] }));
+        const actions = actionsOf(results, 'a.txt');
+        const btn = menuBtnOf(actions);
+        const menu = menuOf(actions);
+        btn.click();
+        expect(menu.hidden).toBe(false);
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+        expect(menu.hidden).toBe(true);
+        expect(btn.getAttribute('aria-expanded')).toBe('false');
+      });
+    });
+
     describe('right-click context menu', () => {
       it('contextmenu on a data row prevents default and opens the menu at clientX/clientY', async () => {
         const { results } = await setupCleared();

@@ -21,7 +21,6 @@ import { toBrowseHash, toSearchHash } from '../router';
 import {
   setup,
   setupCleared,
-  flush,
   browseResult,
   fileEntry,
   cellsOf,
@@ -97,14 +96,35 @@ describe('startApp', () => {
       expect(breadcrumb.className).toBe('breadcrumb');
     });
 
-    it('renders a search text input with the Search... placeholder and a Search button', () => {
-      const { searchInput, searchBtn } = setup();
+    it('renders a search text input inside a .search-wrapper with a magnifying glass icon and a clear button', () => {
+      const { searchInput, searchWrapper, searchIcon, searchClearBtn } = setup();
       expect(searchInput).toBeTruthy();
       expect(searchInput.type).toBe('text');
       expect(searchInput.getAttribute('placeholder')).toBe('Search...');
-      expect(searchBtn).toBeTruthy();
-      expect(searchBtn.textContent?.trim()).toBe('Search');
-      expect(searchBtn.className).toBe('btn');
+      // The wrapper contains the input, search icon, and clear button
+      expect(searchWrapper).toBeTruthy();
+      expect(searchWrapper.className).toBe('search-wrapper');
+      expect(searchWrapper.contains(searchInput)).toBe(true);
+      // Magnifying glass icon at idle
+      expect(searchIcon).toBeTruthy();
+      expect(searchIcon.className).toContain('bi-search');
+      expect(searchIcon.className).toContain('search-icon');
+      expect(searchWrapper.contains(searchIcon)).toBe(true);
+      // Clear (X) button
+      expect(searchClearBtn).toBeTruthy();
+      expect(searchClearBtn.className).toBe('clear-btn');
+      expect(searchClearBtn.getAttribute('aria-label')).toBe('Clear search');
+      const clearIcon = searchClearBtn.querySelector('.bi');
+      expect(clearIcon).toBeTruthy();
+      expect(clearIcon?.className).toContain('bi-x-lg');
+      expect(searchWrapper.contains(searchClearBtn)).toBe(true);
+    });
+
+    it('does NOT render a Search button (removed in favor of instant debounced search)', () => {
+      const { root } = setup();
+      const buttons = Array.from(root.querySelectorAll('button'));
+      const searchButtons = buttons.filter((b) => (b.textContent ?? '').trim() === 'Search');
+      expect(searchButtons).toHaveLength(0);
     });
 
     it('renders an upload control: label.btn wrapping a visually-hidden, multiple file input', () => {
@@ -468,16 +488,22 @@ describe('import characterization (KEEP-list behaviors)', () => {
 
   describe('toSearchHash (query/path percent-encoding)', () => {
     it('encodes special characters in the search query and scope path', async () => {
-      const { searchInput, searchBtn } = setup({ hash: toBrowseHash('docs') });
-      await flush();
+      vi.useFakeTimers();
+      try {
+        const { searchInput } = setup({ hash: toBrowseHash('docs') });
+        vi.advanceTimersByTime(1000); // settle initial render
 
-      searchInput.value = 'a & b=c?';
-      searchBtn.click();
+        searchInput.value = 'a & b=c?';
+        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+        vi.advanceTimersByTime(200); // fire the debounce
 
-      const expected =
-        '#/search?q=' + encodeURIComponent('a & b=c?') + '&path=' + encodeURIComponent('docs');
-      expect(window.location.hash).toBe(expected);
-      expect(window.location.hash).toBe(toSearchHash('a & b=c?', 'docs'));
+        const expected =
+          '#/search?q=' + encodeURIComponent('a & b=c?') + '&path=' + encodeURIComponent('docs');
+        expect(window.location.hash).toBe(expected);
+        expect(window.location.hash).toBe(toSearchHash('a & b=c?', 'docs'));
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

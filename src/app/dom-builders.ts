@@ -153,7 +153,38 @@ function createMenu(
   function onDocKey(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
       closeMenu();
+      return;
     }
+    // WAI-ARIA Menu Button keyboard contract: ArrowDown/ArrowUp move focus
+    // between items (wrapping at the ends) and Home/End jump to the first /
+    // last item. These are handled only while the menu is open (this listener
+    // is registered by openMenu and removed by closeMenu), and they call
+    // preventDefault so the keys never also scroll the page. Any other key is
+    // ignored so typing / tabbing etc. behave normally.
+    const count = items.length;
+    if (count === 0) return;
+    const current = items.findIndex((el) => el === document.activeElement);
+    let next: number;
+    switch (event.key) {
+      case 'ArrowDown':
+        // No item focused yet → land on the first; otherwise advance with wrap.
+        next = current < 0 ? 0 : (current + 1) % count;
+        break;
+      case 'ArrowUp':
+        // No item focused yet → land on the last; otherwise retreat with wrap.
+        next = current < 0 ? count - 1 : (current - 1 + count) % count;
+        break;
+      case 'Home':
+        next = 0;
+        break;
+      case 'End':
+        next = count - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    items[next].focus();
   }
 
   function closeMenu(): void {

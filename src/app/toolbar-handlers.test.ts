@@ -1,7 +1,7 @@
 /**
- * Tests for the toolbar handlers — the search button / Enter-key handler and
- * the upload (change) handler, including the per-file upload error-handling
- * contract.
+ * Tests for the toolbar handlers — the search button / Enter-key handler, the
+ * clear-search handler, and the upload (change) handler, including the
+ * per-file upload error-handling contract.
  *
  * Split out of the former `src/app.test.ts` monolith (task-29). Shared
  * fixtures, DOM scaffolding, and the per-test fetch stub come from
@@ -9,7 +9,7 @@
  *
  * Environment: the project-default `happy-dom` (these tests need a DOM).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { toBrowseHash, toSearchHash } from '../router';
 import { normalizeRelativePath } from '../format';
 import { mockResponse } from '../test-utils/mock-response';
@@ -22,7 +22,7 @@ import {
   fetchMock,
   installAppTestLifecycle,
 } from './test-helpers';
-import { pickAndUploadInto } from './toolbar-handlers';
+import { clearSearch, pickAndUploadInto } from './toolbar-handlers';
 
 installAppTestLifecycle();
 
@@ -31,54 +31,205 @@ installAppTestLifecycle();
  * ========================================================================= */
 describe('toolbar handlers', () => {
   describe('search', () => {
-    it('navigates to a search hash for the input value and current path when the Search button is clicked', async () => {
-      const { searchInput, searchBtn } = setup({ hash: toBrowseHash('docs') });
-      await flush();
+    it('navigates to a search hash 200ms after the user types in the input (debounced)', async () => {
+      vi.useFakeTimers();
+      try {
+        const { searchInput } = setup({ hash: toBrowseHash('docs') });
+        vi.advanceTimersByTime(1000); // settle initial render
 
-      searchInput.value = 'hello world';
-      searchBtn.click();
+        searchInput.value = 'hello world';
+        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
 
-      expect(window.location.hash).toBe(toSearchHash('hello world', normalizeRelativePath('docs')));
+        // Not yet — debounce hasn't fired
+        expect(window.location.hash).toBe(toBrowseHash('docs'));
+
+        vi.advanceTimersByTime(200);
+        expect(window.location.hash).toBe(toSearchHash('hello world', 'docs'));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('resets the debounce timer on each keystroke (only fires after 200ms of silence)', async () => {
+      vi.useFakeTimers();
+      try {
+        const { searchInput } = setup({ hash: toBrowseHash('docs') });
+        vi.advanceTimersByTime(1000);
+
+        searchInput.value = 'h';
+        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+        vi.advanceTimersByTime(150); // not enough
+        searchInput.value = 'he';
+        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+        vi.advanceTimersByTime(150); // 150ms since last keystroke, still not enough
+        expect(window.location.hash).toBe(toBrowseHash('docs'));
+
+        vi.advanceTimersByTime(50); // now 200ms since last keystroke
+        expect(window.location.hash).toBe(toSearchHash('he', 'docs'));
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('trims the query before navigating', async () => {
-      const { searchInput, searchBtn } = setup({ hash: toBrowseHash('docs') });
-      await flush();
+      vi.useFakeTimers();
+      try {
+        const { searchInput } = setup({ hash: toBrowseHash('docs') });
+        vi.advanceTimersByTime(1000);
 
-      searchInput.value = '   spaced   ';
-      searchBtn.click();
+        searchInput.value = '   spaced   ';
+        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+        vi.advanceTimersByTime(200);
 
-      expect(window.location.hash).toBe(toSearchHash('spaced', 'docs'));
+        expect(window.location.hash).toBe(toSearchHash('spaced', 'docs'));
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
-    it('clears the search (returns to browse) when the query is empty', async () => {
-      const { searchInput, searchBtn } = setup({ hash: toSearchHash('foo', 'docs') });
-      await flush();
+    it('clears the search (returns to browse) when the query becomes empty', async () => {
+      vi.useFakeTimers();
+      try {
+        const { searchInput } = setup({ hash: toSearchHash('foo', 'docs') });
+        vi.advanceTimersByTime(1000);
 
-      searchInput.value = '';
-      searchBtn.click();
+        searchInput.value = '';
+        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+        vi.advanceTimersByTime(200);
 
-      expect(window.location.hash).toBe(toBrowseHash('docs'));
+        expect(window.location.hash).toBe(toBrowseHash('docs'));
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
-    it('clears the search when the query is only whitespace', async () => {
-      const { searchInput, searchBtn } = setup({ hash: toSearchHash('foo', 'docs') });
-      await flush();
-
-      searchInput.value = '   \t  ';
-      searchBtn.click();
-
-      expect(window.location.hash).toBe(toBrowseHash('docs'));
-    });
-
-    it('navigates when Enter is pressed inside the search input', async () => {
-      const { searchInput } = setup({ hash: toBrowseHash('docs') });
+    it('clears the search input and navigates to browse when the X (clear) button is clicked', async () => {
+      const { searchInput, searchClearBtn } = setup({ hash: toSearchHash('foo', 'docs') });
       await flush();
 
       searchInput.value = 'foo';
-      searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+      searchClearBtn.click();
 
-      expect(window.location.hash).toBe(toSearchHash('foo', 'docs'));
+      expect(searchInput.value).toBe('');
+      expect(window.location.hash).toBe(toBrowseHash('docs'));
+    });
+
+    it('clears the search input and navigates to browse when Escape is pressed', async () => {
+      const { searchInput } = setup({ hash: toSearchHash('foo', 'docs') });
+      await flush();
+
+      searchInput.value = 'foo';
+      searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+      expect(searchInput.value).toBe('');
+      expect(window.location.hash).toBe(toBrowseHash('docs'));
+    });
+
+    it('Escape key stops propagation (does not close the parent <dialog>)', async () => {
+      const { searchInput } = setup({ hash: toBrowseHash('docs') });
+      await flush();
+
+      const parentEl = searchInput.closest('.file-browser') ?? document.body;
+      parentEl.addEventListener('keydown', () => {
+        // should NOT fire if stopPropagation worked
+      });
+
+      const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
+      const stopSpy = vi.spyOn(event, 'stopPropagation');
+      searchInput.dispatchEvent(event);
+
+      expect(stopSpy).toHaveBeenCalled();
+    });
+
+    it('still navigates immediately when Enter is pressed (bypasses debounce)', async () => {
+      vi.useFakeTimers();
+      try {
+        const { searchInput } = setup({ hash: toBrowseHash('docs') });
+        vi.advanceTimersByTime(1000);
+
+        searchInput.value = 'foo';
+        searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+        // Enter fires immediately, no debounce wait needed
+        expect(window.location.hash).toBe(toSearchHash('foo', 'docs'));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('clearSearch', () => {
+    // clearSearch() is the explicit "clear the search box and return to browse"
+    // handler (e.g. an "×" / Clear button). It must (1) blank the shared search
+    // input, (2) read the CURRENT route's path, and (3) navigate to the browse
+    // hash for that path — mirroring doSearch()'s empty-query branch, but as a
+    // dedicated, unconditional entry point that also wipes the input text.
+
+    it('resets the search input value to an empty string', async () => {
+      const { searchInput } = setup({ hash: toSearchHash('foo', 'docs') });
+      await flush();
+
+      searchInput.value = 'leftover query';
+      clearSearch();
+      await flush();
+
+      expect(searchInput.value).toBe('');
+    });
+
+    it('navigates to the browse hash for the current browse path', async () => {
+      setup({ hash: toBrowseHash('docs/sub') });
+      await flush();
+
+      clearSearch();
+      await flush();
+
+      expect(window.location.hash).toBe(toBrowseHash(normalizeRelativePath('docs/sub')));
+    });
+
+    it('uses the current route path even when the app is showing a search view', async () => {
+      // A search route carries its own `path` (the search scope); clearSearch
+      // must drop the query and return to browsing THAT path, not root.
+      setup({ hash: toSearchHash('anything', 'docs') });
+      await flush();
+
+      clearSearch();
+      await flush();
+
+      expect(window.location.hash).toBe(toBrowseHash('docs'));
+    });
+
+    it('normalizes the current path before building the browse hash', async () => {
+      // A trailing slash (or backslashes) in the current path is collapsed by
+      // normalizeRelativePath so the resulting browse hash is canonical.
+      setup({ hash: toBrowseHash('docs/') });
+      await flush();
+
+      clearSearch();
+      await flush();
+
+      expect(window.location.hash).toBe(toBrowseHash('docs'));
+    });
+
+    it('navigates to the root browse hash when the current path is empty', async () => {
+      setup({ hash: '' });
+      await flush();
+
+      clearSearch();
+      await flush();
+
+      expect(window.location.hash).toBe(toBrowseHash(''));
+    });
+
+    it('clears the input and navigates to browse together', async () => {
+      const { searchInput } = setup({ hash: toSearchHash('foo', 'docs') });
+      await flush();
+
+      searchInput.value = 'stale text';
+      clearSearch();
+      await flush();
+
+      expect(searchInput.value).toBe('');
+      expect(window.location.hash).toBe(toBrowseHash('docs'));
     });
   });
 

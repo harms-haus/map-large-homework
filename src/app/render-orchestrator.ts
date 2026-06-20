@@ -71,6 +71,18 @@ export async function render(): Promise<void> {
   const route = getCurrentRoute();
   const resultsEl = getResults();
   resultsEl.innerHTML = '';
+  // Show a spinner in the results container while a search fetch is in flight.
+  // For browse routes, no spinner is shown. The spinner is removed naturally:
+  // `renderSearch(result)` clears the container before building the table, and
+  // the error handler's `textContent` assignment replaces all content.
+  if (route.view === 'search') {
+    const spinnerWrap = document.createElement('div');
+    spinnerWrap.className = 'search-spinner';
+    const spinnerIcon = document.createElement('i');
+    spinnerIcon.className = 'bi bi-arrow-repeat spinning';
+    spinnerWrap.appendChild(spinnerIcon);
+    resultsEl.appendChild(spinnerWrap);
+  }
   try {
     if (route.view === 'browse') {
       const result = await getApi().browse(normalizeRelativePath(route.path));

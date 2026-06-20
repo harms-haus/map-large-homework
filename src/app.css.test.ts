@@ -43,6 +43,74 @@ function ruleDeclarations(selectorRegex: RegExp): string | null {
   return m ? m[1] : null;
 }
 
+/* ===========================================================================
+ * Parsing helpers for the search-wrapper / icon / spinner tests below.
+ *
+ * `ruleDeclarations` above returns only the FIRST matching rule block and so
+ * cannot cope with selectors that own MORE than one rule — e.g. `.clear-btn`
+ * has a positioning rule, a base-styling rule, AND a default-hidden
+ * `display:none` rule — nor with comma-grouped selectors. The helpers below
+ * parse the stylesheet into discrete `{ selector, declarations }` blocks.
+ *
+ * Comments are stripped first because the file's explanatory comments contain
+ * literal braces (the `.browser-dialog` block quotes `dialog:not([open])
+ * { display: none }` and the `.row-menu` block quotes `.results { overflow:auto
+ * }`), which would otherwise corrupt naive brace-counting.
+ * ========================================================================= */
+
+/** Strip C-style block comments (delimited by slash-star and star-slash). */
+function stripComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+interface CssRule {
+  selector: string;
+  declarations: string;
+}
+
+/**
+ * Split a stylesheet into top-level rules, honouring nested braces so an
+ * `@keyframes` body is kept as ONE rule rather than split at its inner `to {}`.
+ */
+function parseRules(css: string): CssRule[] {
+  const rules: CssRule[] = [];
+  let i = 0;
+  while (i < css.length) {
+    const open = css.indexOf('{', i);
+    if (open === -1) break;
+    const selector = css.slice(i, open).trim();
+    let depth = 1;
+    let j = open + 1;
+    while (j < css.length && depth > 0) {
+      if (css[j] === '{') depth++;
+      else if (css[j] === '}') depth--;
+      j++;
+    }
+    const declarations = css.slice(open + 1, j - 1);
+    if (selector.length > 0) rules.push({ selector, declarations });
+    i = j;
+  }
+  return rules;
+}
+
+const RULES: CssRule[] = parseRules(stripComments(CSS));
+
+/** Every rule whose selector contains `selectorToken` (compiled as a regex). */
+function rulesMatching(selectorToken: string): CssRule[] {
+  const re = new RegExp(selectorToken);
+  return RULES.filter((r) => re.test(r.selector));
+}
+
+/** True if ANY rule matching `selectorToken` also declares something matching `decl`. */
+function hasDecl(selectorToken: string, decl: RegExp): boolean {
+  return rulesMatching(selectorToken).some((r) => decl.test(r.declarations));
+}
+
+/** The first rule matching `selectorToken` that ALSO declares `decl`, or undefined. */
+function ruleWith(selectorToken: string, decl: RegExp): CssRule | undefined {
+  return rulesMatching(selectorToken).find((r) => decl.test(r.declarations));
+}
+
 describe('src/app.css — native <dialog> visibility contract', () => {
   it('the base .browser-dialog rule does NOT declare display', () => {
     // Selector must be exactly `.browser-dialog` followed by `{` — the negative
@@ -335,5 +403,305 @@ describe('src/app.css — row menu items (.row-menu .btn)', () => {
     // the Download item visually consistent with the buttons.
     const item = ruleDeclarations(/\.row-menu \.btn/)!;
     expect(/text-decoration\s*:\s*none/.test(item), 'text-decoration:none override').toBe(true);
+  });
+});
+
+/* ===========================================================================
+ * Search input wrapper, in-input icons, visibility toggling & spinner
+ *
+ * The toolbar's search field is wrapped in `.search-wrapper`, which owns the
+ * positioning for two affordances layered absolutely over the input: a
+ * decorative search glyph (`.search-icon`) and a clear button (`.clear-btn`).
+ * Their visibility is toggled purely in CSS via `:placeholder-shown` (the glyph
+ * shows when the field is empty; the clear button shows once the user has
+ * typed). A separate `.spinning` / `.search-spinner` pair styles the loading
+ * indicator shown during an in-flight search.
+ *
+ * As with the sections above, the raw stylesheet is parsed (the vitest env does
+ * not load app.css) — here via `parseRules`, which splits the file into
+ * per-rule blocks after stripping comments.
+ * ========================================================================= */
+describe('src/app.css — search input wrapper (.search-wrapper)', () => {
+  // The wrapper replaces the bare <input> as the direct flex child of .toolbar,
+  // so it — not the input — must carry the `margin-left:auto` that right-aligns
+  // the search control. `position:relative` establishes the containing block for
+  // the absolutely-positioned icons; `inline-flex` + `align-items:center` keep
+  // the input and overlays vertically centered.
+  const wrapper = () => rulesMatching('^\\.search-wrapper$')[0];
+
+  it('exists as a base .search-wrapper rule', () => {
+    expect(wrapper(), 'a base .search-wrapper { ... } rule must exist').toBeDefined();
+  });
+
+  it('is position:relative so its absolutely-positioned icons anchor to it', () => {
+    expect(wrapper(), 'a base .search-wrapper rule must exist').toBeDefined();
+    expect(/position\s*:\s*relative/.test(wrapper()!.declarations), 'position:relative').toBe(true);
+  });
+
+  it('is an inline-flex, vertically-centered row container', () => {
+    expect(/display\s*:\s*inline-flex/.test(wrapper()!.declarations), 'display:inline-flex').toBe(
+      true,
+    );
+    expect(/align-items\s*:\s*center/.test(wrapper()!.declarations), 'align-items:center').toBe(
+      true,
+    );
+  });
+
+  it('right-aligns within the toolbar via margin-left:auto', () => {
+    expect(/margin-left\s*:\s*auto/.test(wrapper()!.declarations), 'margin-left:auto').toBe(true);
+  });
+});
+
+describe('src/app.css — wrapped search input (.search-wrapper input[type=text])', () => {
+  // The inherited `.toolbar input[type='text']` rule sets `margin-left:auto`;
+  // the wrapper-scoped override must reset it to 0 (the wrapper now owns
+  // right-alignment) and add right padding so typed text never slips under the
+  // absolutely-positioned overlay icon.
+  const token = "\\.search-wrapper\\s+input\\[type='text'\\]";
+
+  it('resets margin-left to 0 (the wrapper owns positioning now)', () => {
+    expect(hasDecl(token, /margin-left\s*:\s*0/), 'margin-left:0').toBe(true);
+  });
+
+  it('reserves right padding so text does not run under the overlay icon', () => {
+    expect(hasDecl(token, /padding-right\s*:\s*28px/), 'padding-right:28px').toBe(true);
+  });
+});
+
+describe('src/app.css — in-input overlay icons (.search-icon / .clear-btn)', () => {
+  it('absolutely positions the search glyph at the right edge in muted foreground', () => {
+    const rule = ruleWith('\\.search-icon', /position\s*:\s*absolute/);
+    expect(rule, 'a rule positioning .search-icon must exist').toBeDefined();
+    expect(/right\s*:\s*6px/.test(rule!.declarations), 'right:6px').toBe(true);
+    expect(/color\s*:\s*#9a9a9a/.test(rule!.declarations), 'muted color #9a9a9a').toBe(true);
+  });
+
+  it('makes the search glyph non-interactive (decorative only)', () => {
+    expect(hasDecl('\\.search-icon', /pointer-events\s*:\s*none/), 'pointer-events:none').toBe(
+      true,
+    );
+  });
+
+  it('absolutely positions the clear button at the right edge in muted foreground', () => {
+    const rule = ruleWith('\\.clear-btn', /position\s*:\s*absolute/);
+    expect(rule, 'a rule positioning .clear-btn must exist').toBeDefined();
+    expect(/right\s*:\s*6px/.test(rule!.declarations), 'right:6px').toBe(true);
+    expect(/color\s*:\s*#9a9a9a/.test(rule!.declarations), 'muted color #9a9a9a').toBe(true);
+  });
+
+  it('styles .clear-btn as a chromeless inline-flex icon button', () => {
+    const rule = ruleWith('\\.clear-btn', /background\s*:\s*none/);
+    expect(rule, 'a base .clear-btn styling rule must exist').toBeDefined();
+    expect(/border\s*:\s*none/.test(rule!.declarations), 'border:none').toBe(true);
+    expect(/cursor\s*:\s*pointer/.test(rule!.declarations), 'cursor:pointer').toBe(true);
+    expect(/padding\s*:\s*2px/.test(rule!.declarations), 'padding:2px').toBe(true);
+    expect(/display\s*:\s*inline-flex/.test(rule!.declarations), 'display:inline-flex').toBe(true);
+    expect(/align-items\s*:\s*center/.test(rule!.declarations), 'align-items:center').toBe(true);
+    expect(/line-height\s*:\s*1/.test(rule!.declarations), 'line-height:1').toBe(true);
+  });
+
+  it('keeps the clear button CLICKABLE — no rule may set pointer-events:none on it', () => {
+    // The decorative .search-icon is pointer-events:none, but the clear button
+    // must remain clickable. Guard against that declaration being copied onto
+    // .clear-btn by mistake (which would make it unclickable).
+    const clearRules = rulesMatching('\\.clear-btn');
+    expect(clearRules.length, 'at least one .clear-btn rule must exist').toBeGreaterThan(0);
+    const offending = clearRules.filter((r) => /pointer-events\s*:\s*none/.test(r.declarations));
+    expect(offending, 'no .clear-btn rule may set pointer-events:none').toEqual([]);
+  });
+
+  it('brightens the clear button to full foreground on hover', () => {
+    expect(hasDecl('\\.clear-btn:hover', /color\s*:\s*#e6e6e6/), 'hover color #e6e6e6').toBe(true);
+  });
+});
+
+describe('src/app.css — icon visibility toggling via :placeholder-shown', () => {
+  // Pure-CSS toggling (no JS): when the field is empty its placeholder is shown
+  // and the clear button stays hidden; once the user types the placeholder is
+  // no longer shown, so the search glyph is hidden and the clear button shown.
+  it('hides the clear button by default (input empty / placeholder shown)', () => {
+    expect(
+      hasDecl('\\.clear-btn', /display\s*:\s*none/),
+      'a .clear-btn rule must set display:none as the default (empty) state',
+    ).toBe(true);
+  });
+
+  it('hides the search glyph once the user has typed (placeholder NOT shown)', () => {
+    expect(
+      hasDecl('input:not\\(:placeholder-shown\\)\\s*~\\s*\\.search-icon', /display\s*:\s*none/),
+      '.search-icon must be display:none when the input is not showing its placeholder',
+    ).toBe(true);
+  });
+
+  it('reveals the clear button once the user has typed', () => {
+    expect(
+      hasDecl(
+        'input:not\\(:placeholder-shown\\)\\s*~\\s*\\.clear-btn',
+        /display\s*:\s*inline-flex/,
+      ),
+      '.clear-btn must be display:inline-flex when the input is not showing its placeholder',
+    ).toBe(true);
+  });
+});
+
+describe('src/app.css — spinner animation', () => {
+  it('defines a @keyframes spin that rotates a full turn', () => {
+    expect(
+      hasDecl('@keyframes\\s+spin\\b', /transform\s*:\s*rotate\(360deg\)/),
+      '@keyframes spin must declare transform: rotate(360deg)',
+    ).toBe(true);
+  });
+
+  it('.spinning applies the spin loop as an infinite inline-block', () => {
+    const rule = rulesMatching('^\\.spinning$')[0];
+    expect(rule, 'a .spinning { ... } rule must exist').toBeDefined();
+    expect(
+      /animation\s*:\s*spin\s+1s\s+linear\s+infinite/.test(rule!.declarations),
+      'animation: spin 1s linear infinite',
+    ).toBe(true);
+    expect(/display\s*:\s*inline-block/.test(rule!.declarations), 'display:inline-block').toBe(
+      true,
+    );
+  });
+
+  it('.search-spinner is a centered, muted placeholder for the spinner', () => {
+    const rule = rulesMatching('^\\.search-spinner$')[0];
+    expect(rule, 'a .search-spinner { ... } rule must exist').toBeDefined();
+    expect(/display\s*:\s*flex/.test(rule!.declarations), 'display:flex').toBe(true);
+    expect(/justify-content\s*:\s*center/.test(rule!.declarations), 'justify-content:center').toBe(
+      true,
+    );
+    expect(/align-items\s*:\s*center/.test(rule!.declarations), 'align-items:center').toBe(true);
+    expect(/padding\s*:\s*16px/.test(rule!.declarations), 'padding:16px').toBe(true);
+    expect(/color\s*:\s*#9a9a9a/.test(rule!.declarations), 'muted color #9a9a9a').toBe(true);
+    expect(/font-size\s*:\s*20px/.test(rule!.declarations), 'font-size:20px').toBe(true);
+  });
+});
+
+describe('src/app.css — new rules placed in the toolbar section / at end of file', () => {
+  it('search-wrapper rules come after the existing search-input :focus rule', () => {
+    const focusIdx = RULES.findIndex((r) => /input\[type='text'\]:focus/.test(r.selector));
+    const wrapperIdx = RULES.findIndex((r) => r.selector === '.search-wrapper');
+    expect(
+      focusIdx,
+      'the existing .toolbar input:focus rule must be present',
+    ).toBeGreaterThanOrEqual(0);
+    expect(wrapperIdx, 'a .search-wrapper rule must be present').toBeGreaterThanOrEqual(0);
+    expect(wrapperIdx, '.search-wrapper must come after the :focus rule').toBeGreaterThan(focusIdx);
+  });
+
+  it('places the spinner animation rules at the very end of the file', () => {
+    expect(RULES.at(-1)!.selector, '.search-spinner is the final rule').toBe('.search-spinner');
+    const last3 = new Set(RULES.slice(-3).map((r) => r.selector));
+    expect(last3, 'keyframes/spinning/search-spinner occupy the last three rule slots').toEqual(
+      new Set(['@keyframes spin', '.spinning', '.search-spinner']),
+    );
+  });
+});
+
+/* ===========================================================================
+ * Search wrapper, in-input icons & spinner — companion contract via
+ * ruleDeclarations().
+ *
+ * A focused restatement of the search-wrapper / icon / spinner contract that
+ * uses the simple first-match `ruleDeclarations` helper (instead of the
+ * `parseRules`-based helpers used in the blocks above). Most of these
+ * selectors own exactly one rule, so `ruleDeclarations` resolves them
+ * directly.
+ *
+ * Two selectors own MORE than one rule, so `ruleDeclarations` (which returns
+ * only the FIRST match) cannot single out the specific declaration under test:
+ *   - `.search-wrapper .clear-btn` appears as a combined positioning rule
+ *     (`.search-icon, .clear-btn { position:absolute; ... }`) BEFORE its
+ *     default-hidden `.clear-btn { display:none }` rule;
+ *   - `.search-wrapper .search-icon`'s first brace-terminated rule is the
+ *     `pointer-events:none` rule, not the combined positioning rule.
+ * For those two assertions we match the raw `CSS` string directly — the same
+ * technique the `.browse-table` block above and this block's own clear-btn
+ * position check already use.
+ * ========================================================================= */
+describe('src/app.css — search wrapper and in-input icons', () => {
+  it('.search-wrapper is a relative inline-flex container with margin-left:auto', () => {
+    const rule = ruleDeclarations(/\.search-wrapper(?![\w[#.])/);
+    expect(rule, 'a .search-wrapper rule must exist').not.toBeNull();
+    expect(/position\s*:\s*relative/.test(rule!), 'position:relative').toBe(true);
+    expect(/display\s*:\s*inline-flex/.test(rule!), 'display:inline-flex').toBe(true);
+    expect(/align-items\s*:\s*center/.test(rule!), 'align-items:center').toBe(true);
+    expect(/margin-left\s*:\s*auto/.test(rule!), 'margin-left:auto').toBe(true);
+  });
+
+  it('.search-wrapper input overrides margin-left to 0 and adds right padding', () => {
+    const rule = ruleDeclarations(/\.search-wrapper input\[type='text'\]/);
+    expect(rule, 'a .search-wrapper input rule must exist').not.toBeNull();
+    expect(/margin-left\s*:\s*0/.test(rule!), 'margin-left:0 override').toBe(true);
+    expect(/padding-right\s*:\s*\d+px/.test(rule!), 'padding-right present').toBe(true);
+  });
+
+  it('.search-wrapper .clear-btn is hidden by default (display:none)', () => {
+    // .clear-btn owns several rules (a combined positioning rule comes first,
+    // then a styling rule, then the default-hidden rule), so ruleDeclarations
+    // cannot return the display:none rule — verify it against the raw CSS.
+    expect(CSS, 'a default-hidden .search-wrapper .clear-btn rule must exist').toMatch(
+      /\.search-wrapper \.clear-btn\s*\{[^}]*display\s*:\s*none/,
+    );
+  });
+
+  it('the clear button becomes visible when the input has text (:placeholder-shown toggling)', () => {
+    const showRule = ruleDeclarations(
+      /\.search-wrapper input:not\(:placeholder-shown\) ~ \.clear-btn/,
+    );
+    expect(showRule, 'a :placeholder-shown clear-btn reveal rule must exist').not.toBeNull();
+    expect(
+      /display\s*:\s*(?:inline-flex|flex|block)/.test(showRule!),
+      'clear-btn shown when text present',
+    ).toBe(true);
+  });
+
+  it('the search icon is hidden when the input has text', () => {
+    const hideRule = ruleDeclarations(
+      /\.search-wrapper input:not\(:placeholder-shown\) ~ \.search-icon/,
+    );
+    expect(hideRule, 'a :placeholder-shown search-icon hide rule must exist').not.toBeNull();
+    expect(/display\s*:\s*none/.test(hideRule!), 'search-icon hidden when text present').toBe(true);
+  });
+
+  it('the search icon and clear button are absolutely positioned right-aligned', () => {
+    // The position:absolute declaration lives in the combined
+    // `.search-icon, .clear-btn` rule, and the first `.search-icon` rule
+    // ruleDeclarations returns is the pointer-events rule — so verify the
+    // positioning against the raw CSS string instead.
+    expect(CSS, 'search-icon must declare position:absolute').toMatch(
+      /\.search-wrapper \.search-icon[^{]*\{[^}]*position\s*:\s*absolute/,
+    );
+    expect(CSS, 'search-icon must have a right offset').toMatch(
+      /\.search-wrapper \.search-icon[^{]*\{[^}]*right\s*:\s*\d+px/,
+    );
+    expect(CSS, 'clear-btn must declare position:absolute somewhere').toMatch(
+      /\.clear-btn[^{]*\{[^}]*position\s*:\s*absolute/,
+    );
+  });
+});
+
+describe('src/app.css — spinner animation', () => {
+  it('defines a @keyframes spin animation', () => {
+    expect(CSS, '@keyframes spin must exist').toMatch(/@keyframes\s+spin\s*\{/);
+    expect(CSS, 'spin keyframes must rotate to 360deg').toMatch(
+      /transform\s*:\s*rotate\(\s*360deg\s*\)/,
+    );
+  });
+
+  it('.spinning class applies the spin animation infinitely', () => {
+    const rule = ruleDeclarations(/\.spinning(?![\w[#.])/);
+    expect(rule, 'a .spinning rule must exist').not.toBeNull();
+    expect(/animation\s*:\s*spin/.test(rule!), 'animation references spin keyframes').toBe(true);
+    expect(/infinite/.test(rule!), 'animation runs infinitely').toBe(true);
+  });
+
+  it('.search-spinner centers the spinner with padding', () => {
+    const rule = ruleDeclarations(/\.search-spinner(?![\w[#.])/);
+    expect(rule, 'a .search-spinner rule must exist').not.toBeNull();
+    expect(/display\s*:\s*flex/.test(rule!), 'display:flex').toBe(true);
+    expect(/justify-content\s*:\s*center/.test(rule!), 'justify-content:center').toBe(true);
+    expect(/padding\s*:\s*\d+px/.test(rule!), 'padding present').toBe(true);
   });
 });

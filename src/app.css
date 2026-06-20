@@ -193,6 +193,61 @@ body {
   border-color: #6aa6ff;
 }
 
+/* ── Search wrapper, in-input icons, visibility toggling ──
+   The search input is wrapped in .search-wrapper so a search glyph and a
+   clear button can be overlaid inside the right edge of the input. The
+   wrapper becomes the toolbar's right-aligned flex child (margin-left: auto),
+   replacing the margin-left:auto that was on the bare input. */
+.search-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+/* Override the inherited .toolbar input margin-left:auto (the wrapper handles
+   positioning now) and reserve space so typed text never slides under the
+   absolutely-positioned icon. */
+.search-wrapper input[type='text'] {
+  margin-left: 0;
+  padding-right: 28px;
+}
+/* Both overlays sit inside the input's right edge. The search icon is
+   decorative (no clicks); the clear button must stay clickable. */
+.search-wrapper .search-icon,
+.search-wrapper .clear-btn {
+  position: absolute;
+  right: 6px;
+  color: #9a9a9a;
+}
+.search-wrapper .search-icon {
+  pointer-events: none;
+}
+.search-wrapper .clear-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+.search-wrapper .clear-btn:hover {
+  color: #e6e6e6;
+}
+/* Visibility toggling via :placeholder-shown (no JS). The icon and button are
+   siblings AFTER the input, so the general sibling combinator ~ applies.
+   Empty input (placeholder shown): search icon visible, clear button hidden. */
+.search-wrapper .clear-btn {
+  display: none;
+}
+/* Input has text (placeholder NOT shown): swap — hide search icon, show clear. */
+.search-wrapper input:not(:placeholder-shown) ~ .search-icon {
+  display: none;
+}
+.search-wrapper input:not(:placeholder-shown) ~ .clear-btn {
+  display: inline-flex;
+}
+
 /* ── Results container (scrollable) ──
    Grows to fill its host's remaining height (flex: 1) and scrolls when the
    table body overflows. `min-height: 0` lets the flex item shrink below its
@@ -346,8 +401,13 @@ body {
   opacity: 0;
   pointer-events: none;
 }
+/* Keep the attribute selector in double quotes: that is how a browser
+   serializes an `aria-expanded` attribute set via setAttribute, and the
+   reveal-rule contract in app.css.test.ts anchors on that exact text.
+   prettier-ignore so the repo's singleQuote config doesn't rewrite it. */
+/* prettier-ignore */
 .browse-table tbody tr:hover .row-menu-btn,
-.row-menu-btn[aria-expanded='true'] {
+.row-menu-btn[aria-expanded="true"] {
   opacity: 1;
   pointer-events: auto;
 }
@@ -415,4 +475,26 @@ body {
 }
 .row-menu .btn:hover {
   background: #3a3d41;
+}
+
+/* ── Spinner animation ──
+   Applied to a Bootstrap Icons glyph (e.g. bi-arrow-repeat) to indicate a
+   loading state. `.spinning` rotates the icon; `.search-spinner` centers it
+   in the results area while a search is in flight. */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spinning {
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+.search-spinner {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 16px;
+  color: #9a9a9a;
+  font-size: 20px;
 }

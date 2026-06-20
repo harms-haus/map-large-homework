@@ -27,6 +27,20 @@ export function doSearch(): void {
 }
 
 /**
+ * Clear the search input and return to the browse view for the current path.
+ *
+ * Resets the search input value to an empty string, reads the current path
+ * (normalised), and navigates to the browse hash for that path — the same
+ * behaviour as {@link doSearch} when the query is empty, but exposed as an
+ * explicit, unconditional entry point that also wipes the input text.
+ */
+export function clearSearch(): void {
+  getSearchInput().value = '';
+  const path = normalizeRelativePath(getCurrentRoute().path);
+  navigate(toBrowseHash(path));
+}
+
+/**
  * Upload every selected file to the current path, handle per-file errors, then
  * clear the input, re-render the listing, and surface any failures in the
  * status footer.

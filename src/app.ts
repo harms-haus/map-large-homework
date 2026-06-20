@@ -30,7 +30,8 @@
  *   the frame + titlebar, so the embedded view is chromeless.
  *
  *   .file-browser:
- *     toolbar   — .breadcrumb + search <input> + <button> + <label> upload
+ *     toolbar   — .breadcrumb + .search-wrapper (search <input> +
+ *                search-icon + clear-btn) + <label> upload
  *     .results  — file/folder <table>
  *     <footer class="status"> — summary line
  *
@@ -42,7 +43,7 @@
  * existing `import { startApp, renderBrowse, renderSearch } from './app'`
  * continues to resolve without modification.
  */
-import { doSearch, handleUpload } from './app/toolbar-handlers.js';
+import { doSearch, handleUpload, clearSearch } from './app/toolbar-handlers.js';
 import { init } from './app/render-orchestrator.js';
 import type { DomRefs } from './app/context.js';
 
@@ -71,10 +72,22 @@ export function startApp(root: HTMLElement): void {
   const searchInput = document.createElement('input');
   searchInput.type = 'text';
   searchInput.placeholder = 'Search...';
-  const searchBtn = document.createElement('button');
-  searchBtn.className = 'btn';
-  searchBtn.type = 'button';
-  searchBtn.textContent = 'Search';
+  // Search affordance: a wrapper holding the input, a leading search icon,
+  // and a trailing clear button (the latter toggled purely by CSS via
+  // `:placeholder-shown`, so it needs no ref in DomRefs).
+  const searchWrapper = document.createElement('div');
+  searchWrapper.className = 'search-wrapper';
+  const searchIcon = document.createElement('i');
+  searchIcon.className = 'bi bi-search search-icon';
+  const searchClearBtn = document.createElement('button');
+  searchClearBtn.className = 'clear-btn';
+  searchClearBtn.type = 'button';
+  searchClearBtn.setAttribute('aria-label', 'Clear search');
+  const clearIcon = document.createElement('i');
+  clearIcon.className = 'bi bi-x-lg';
+  searchClearBtn.append(clearIcon);
+  // ORDER MATTERS: input first, then icon, then clear-btn (CSS uses ~ sibling combinator)
+  searchWrapper.append(searchInput, searchIcon, searchClearBtn);
   const uploadLabel = document.createElement('label');
   uploadLabel.className = 'btn';
   uploadLabel.textContent = 'Upload';
@@ -92,7 +105,7 @@ export function startApp(root: HTMLElement): void {
   // name (the label text alone doesn't name a focusable input reliably).
   uploadInput.setAttribute('aria-label', 'Upload files');
   uploadLabel.append(uploadInput);
-  toolbar.append(breadcrumbEl, searchInput, searchBtn, uploadLabel);
+  toolbar.append(breadcrumbEl, searchWrapper, uploadLabel);
 
   // Results container + status footer
   const resultsEl = document.createElement('div');
@@ -156,10 +169,28 @@ export function startApp(root: HTMLElement): void {
   });
   closeBtn.addEventListener('click', () => dialog.close());
 
-  searchBtn.addEventListener('click', doSearch);
+  // Debounced search: re-fire `doSearch` 200ms after the last keystroke so
+  // typing a query doesn't pound the API on every character.
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  searchInput.addEventListener('input', () => {
+    if (searchDebounceTimer !== null) {
+      clearTimeout(searchDebounceTimer);
+    }
+    searchDebounceTimer = setTimeout(() => {
+      searchDebounceTimer = null;
+      doSearch();
+    }, 200);
+  });
+  // Clear button: wipe the input and return to the browse view.
+  searchClearBtn.addEventListener('click', clearSearch);
   searchInput.addEventListener('keydown', (event: KeyboardEvent) => {
     if (event.key === 'Enter') {
       doSearch();
+    } else if (event.key === 'Escape') {
+      // stopPropagation is critical: when the widget lives inside the open
+      // <dialog>, the native ESC-to-close would otherwise dismiss the dialog.
+      event.stopPropagation();
+      clearSearch();
     }
   });
 

@@ -84,7 +84,6 @@ interface Ctx {
   toolbar: HTMLElement;
   breadcrumb: HTMLElement;
   searchInput: HTMLInputElement;
-  searchBtn: HTMLButtonElement;
   uploadLabel: HTMLLabelElement;
   uploadInput: HTMLInputElement;
   results: HTMLElement;
@@ -103,18 +102,12 @@ function setup(options: { hash?: string } = {}): Ctx {
   document.body.append(root);
   startApp(root);
 
-  const button = (text: string): HTMLButtonElement =>
-    Array.from(root.querySelectorAll('button')).find(
-      (b) => (b.textContent ?? '').trim() === text,
-    ) as HTMLButtonElement;
-
   return {
     root,
     widget: root.querySelector('.file-browser') as HTMLElement,
     toolbar: root.querySelector('.toolbar') as HTMLElement,
     breadcrumb: root.querySelector('.breadcrumb') as HTMLElement,
     searchInput: root.querySelector('input[type="text"]') as HTMLInputElement,
-    searchBtn: button('Search'),
     uploadLabel: root.querySelector('label.btn') as HTMLLabelElement,
     uploadInput: root.querySelector('input[type="file"]') as HTMLInputElement,
     results: root.querySelector('.results') as HTMLElement,
@@ -516,18 +509,16 @@ describe('startApp DOM ordering', () => {
     expect(kids[2].className).toBe('status');
   });
 
-  it('the toolbar holds breadcrumb, search input, search button, upload label in that order', () => {
+  it('the toolbar holds breadcrumb, search-wrapper, and upload label in that order', () => {
     const { toolbar } = setup();
     const kids = Array.from(toolbar.children);
+    expect(kids).toHaveLength(3);
     expect(kids[0].tagName).toBe('DIV');
     expect(kids[0].className).toBe('breadcrumb');
-    expect(kids[1].tagName).toBe('INPUT');
-    expect((kids[1] as HTMLInputElement).type).toBe('text');
-    expect(kids[2].tagName).toBe('BUTTON');
+    expect(kids[1].tagName).toBe('DIV');
+    expect(kids[1].className).toBe('search-wrapper');
+    expect(kids[2].tagName).toBe('LABEL');
     expect(kids[2].className).toBe('btn');
-    expect((kids[2].textContent ?? '').trim()).toBe('Search');
-    expect(kids[3].tagName).toBe('LABEL');
-    expect(kids[3].className).toBe('btn');
   });
 
   it('the root holds the embedded host, the trigger, then the dialog in that order', () => {
