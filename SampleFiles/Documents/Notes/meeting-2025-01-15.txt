@@ -1,0 +1,5 @@
+Meeting notes - 2025-01-15
+Attendees: Alex, Sam, Jordan
+- Reviewed roadmap
+- Assigned Q1 owners
+- Action: draft spec for search feature

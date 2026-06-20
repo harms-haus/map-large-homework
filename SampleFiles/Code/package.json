@@ -1,0 +1,6 @@
+{
+  "name": "sample-module",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/app.ts"
+}

@@ -91,6 +91,8 @@ const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 interface SetupCtx {
   root: HTMLElement;
+  embeddedHost: HTMLElement;
+  widget: HTMLElement;
   dialog: HTMLDialogElement;
   trigger: HTMLButtonElement;
   closeBtn: HTMLButtonElement;
@@ -124,9 +126,11 @@ function setup(options: { hash?: string } = {}): SetupCtx {
 
   return {
     root,
+    embeddedHost: root.querySelector('.file-browser-host') as HTMLElement,
+    widget: root.querySelector('.file-browser') as HTMLElement,
     dialog: root.querySelector('dialog.browser-dialog') as HTMLDialogElement,
     trigger: root.querySelector('button.trigger') as HTMLButtonElement,
-    closeBtn: button('Close') as HTMLButtonElement,
+    closeBtn: root.querySelector('.close-btn') as HTMLButtonElement,
     breadcrumb: root.querySelector('.breadcrumb') as HTMLElement,
     searchInput: root.querySelector('input[type="text"]') as HTMLInputElement,
     searchBtn: button('Search') as HTMLButtonElement,
@@ -271,14 +275,20 @@ describe('startApp', () => {
       expect(dialog.open).toBe(false);
     });
 
-    it('renders a header with a title span and a Close button', () => {
+    it('renders a header with a centered title span and an icon Close button', () => {
       const { dialog, closeBtn } = setup();
       expect(closeBtn).toBeTruthy();
-      expect(closeBtn.textContent?.trim()).toBe('Close');
-      expect(closeBtn.className).toBe('btn');
+      expect(closeBtn.className).toBe('close-btn');
+      // No visible text — it's an icon button, so it carries an aria-label.
+      expect(closeBtn.textContent?.trim()).toBe('');
+      expect(closeBtn.getAttribute('aria-label')).toBe('Close');
+      const icon = closeBtn.querySelector('.bi');
+      expect(icon).toBeTruthy();
+      expect(icon?.className).toContain('bi-x-lg');
       expect(dialog.contains(closeBtn)).toBe(true);
-      const titleSpan = dialog.querySelector('span');
+      const titleSpan = dialog.querySelector('.title');
       expect(titleSpan).toBeTruthy();
+      expect(titleSpan?.textContent).toBe('File Browser');
     });
 
     it('renders a toolbar with a breadcrumb container', () => {
@@ -340,6 +350,63 @@ describe('startApp', () => {
 
       expect(closeSpy).toHaveBeenCalledTimes(1);
       expect(dialog.open).toBe(false);
+    });
+  });
+
+  /* The file browser is a single chromeless widget shared between the embedded
+     host (primary view) and the dialog body. Opening the dialog MOVES the same
+     nodes into the dialog; closing moves them back — so there is never a second
+     copy, and the embedded view stays chromeless (no frame/title). */
+  describe('shared widget (embedded host vs dialog)', () => {
+    it('renders an embedded host and a single chromeless .file-browser widget', () => {
+      const { embeddedHost, widget } = setup();
+      expect(embeddedHost).toBeTruthy();
+      expect(embeddedHost.className).toBe('file-browser-host');
+      expect(widget).toBeTruthy();
+      expect(widget.className).toBe('file-browser');
+      // There is exactly one widget in the whole document.
+      expect(document.querySelectorAll('.file-browser')).toHaveLength(1);
+    });
+
+    it('hosts the widget in the embedded host while the dialog is closed', () => {
+      const { embeddedHost, widget, dialog } = setup();
+      expect(embeddedHost.contains(widget)).toBe(true);
+      // The widget (and thus its table/search/status) is NOT inside the dialog
+      // until the dialog is opened.
+      expect(dialog.contains(widget)).toBe(false);
+    });
+
+    it('moves the widget into the dialog body when the dialog opens', () => {
+      const { embeddedHost, widget, dialog, trigger } = setup();
+
+      trigger.click();
+
+      expect(dialog.open).toBe(true);
+      expect(dialog.contains(widget)).toBe(true);
+      // Same node reference, not a clone — only one widget exists.
+      expect(document.querySelectorAll('.file-browser')).toHaveLength(1);
+      expect(embeddedHost.contains(widget)).toBe(false);
+    });
+
+    it('moves the widget back to the embedded host when the dialog closes', () => {
+      const { embeddedHost, widget, dialog, trigger } = setup();
+      trigger.click();
+      expect(dialog.contains(widget)).toBe(true);
+
+      dialog.close();
+
+      expect(dialog.open).toBe(false);
+      expect(embeddedHost.contains(widget)).toBe(true);
+      expect(dialog.contains(widget)).toBe(false);
+    });
+
+    it('the embedded widget carries no dialog chrome (no title/close-btn)', () => {
+      const { widget } = setup();
+      // The titlebar (title + close button) is dialog-only chrome; the embedded
+      // widget must not contain a title or close button.
+      expect(widget.querySelector('.title')).toBeNull();
+      expect(widget.querySelector('.close-btn')).toBeNull();
+      expect(widget.querySelector('.dialog-header')).toBeNull();
     });
   });
 });
@@ -792,6 +859,26 @@ describe('toolbar handlers', () => {
       searchBtn.click();
 
       expect(window.location.hash).toBe(toSearchHash('spaced', 'docs'));
+    });
+
+    it('clears the search (returns to browse) when the query is empty', async () => {
+      const { searchInput, searchBtn } = setup({ hash: toSearchHash('foo', 'docs') });
+      await flush();
+
+      searchInput.value = '';
+      searchBtn.click();
+
+      expect(window.location.hash).toBe(toBrowseHash('docs'));
+    });
+
+    it('clears the search when the query is only whitespace', async () => {
+      const { searchInput, searchBtn } = setup({ hash: toSearchHash('foo', 'docs') });
+      await flush();
+
+      searchInput.value = '   \t  ';
+      searchBtn.click();
+
+      expect(window.location.hash).toBe(toBrowseHash('docs'));
     });
 
     it('navigates when Enter is pressed inside the search input', async () => {

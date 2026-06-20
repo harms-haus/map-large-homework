@@ -1,0 +1,5 @@
+Meeting notes - 2025-02-03
+Attendees: Alex, Sam, Jordan, Taylor
+- Search feature in review
+- Discussed folder size totals
+- Action: land tests before merge

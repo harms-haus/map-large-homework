@@ -4,9 +4,19 @@
  *
  * Structure (built imperatively via `document.createElement`):
  *
+ *   .file-browser-host   — primary chromeless surface; hosts the widget while
+ *                          the dialog is closed (embedded view)
  *   <button class="trigger">Browse Files</button>
- *   <dialog class="browser-dialog">
- *     header    — title <span> + Close <button class="btn">
+ *   <dialog class="browser-dialog">  — frame + titlebar (dialog-only chrome)
+ *     .dialog-header     — title <span> + Close icon <button>
+ *     .dialog-body        — empty slot; the shared widget moves here on open
+ *
+ *   The shared .file-browser widget (toolbar + .results + .status) is MOVED
+ *   between the embedded host and the dialog body as the dialog opens/closes.
+ *   It carries no border/background/title of its own — only the dialog adds
+ *   the frame + titlebar, so the embedded view is chromeless.
+ *
+ *   .file-browser:
  *     toolbar   — .breadcrumb + search <input> + <button> + <label> upload
  *     .results  — file/folder <table>
  *     <footer class="status"> — summary line
@@ -45,25 +55,12 @@ let uploadInput!: HTMLInputElement;
 export function startApp(root: HTMLElement): void {
   root.innerHTML = '';
 
-  /* --- Trigger button --- */
-  const trigger = document.createElement('button');
-  trigger.className = 'trigger';
-  trigger.textContent = 'Browse Files';
-
-  /* --- Native <dialog> widget --- */
-  const dialog = document.createElement('dialog');
-  dialog.className = 'browser-dialog';
-
-  // Header: title span + Close button
-  const header = document.createElement('div');
-  header.className = 'dialog-header';
-  const titleSpan = document.createElement('span');
-  titleSpan.textContent = 'File Browser';
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'btn';
-  closeBtn.type = 'button';
-  closeBtn.textContent = 'Close';
-  header.append(titleSpan, closeBtn);
+  /* --- File-browser widget (chromeless; shared by the embedded view and the
+     dialog). It owns the toolbar, results, and status. The frame and titlebar
+     belong to whichever host renders it — never to the widget itself — so when
+     it is embedded directly in the page it carries no border/background/title. --- */
+  const widget = document.createElement('div');
+  widget.className = 'file-browser';
 
   // Toolbar: breadcrumb, search, upload
   const toolbar = document.createElement('div');
@@ -93,11 +90,60 @@ export function startApp(root: HTMLElement): void {
   statusEl = document.createElement('footer');
   statusEl.className = 'status';
 
-  dialog.append(header, toolbar, resultsEl, statusEl);
-  root.append(trigger, dialog);
+  widget.append(toolbar, resultsEl, statusEl);
+
+  /* --- Embedded host: the primary, chromeless surface. The widget lives here
+     while the dialog is closed. --- */
+  const embeddedHost = document.createElement('div');
+  embeddedHost.className = 'file-browser-host';
+  embeddedHost.append(widget);
+
+  /* --- Trigger button --- */
+  const trigger = document.createElement('button');
+  trigger.className = 'trigger';
+  trigger.textContent = 'Browse Files';
+
+  /* --- Native <dialog>: supplies the frame (border/background) and titlebar
+     (title + close). Its body is an empty slot the shared widget drops into
+     when opened. --- */
+  const dialog = document.createElement('dialog');
+  dialog.className = 'browser-dialog';
+
+  // Titlebar: centered title + Close (icon) button
+  const header = document.createElement('div');
+  header.className = 'dialog-header';
+  const titleSpan = document.createElement('span');
+  titleSpan.className = 'title';
+  titleSpan.textContent = 'File Browser';
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'close-btn';
+  closeBtn.type = 'button';
+  // Icon button has no visible text, so expose an accessible name.
+  closeBtn.setAttribute('aria-label', 'Close');
+  const closeIcon = document.createElement('i');
+  closeIcon.className = 'bi bi-x-lg';
+  closeBtn.append(closeIcon);
+  header.append(titleSpan, closeBtn);
+
+  // Dialog body slot: the widget is moved here on open, back to the host on close.
+  const dialogBody = document.createElement('div');
+  dialogBody.className = 'dialog-body';
+
+  dialog.append(header, dialogBody);
+  root.append(embeddedHost, trigger, dialog);
 
   /* --- Event wiring --- */
-  trigger.addEventListener('click', () => dialog.showModal());
+  // Opening the dialog MOVES the shared widget into the dialog body (reusing
+  // the same nodes, so module-level refs and any in-flight render stay valid),
+  // then shows it. Closing — via the close button, ESC, etc. — fires the
+  // dialog's `close` event, which moves the widget back to the embedded host.
+  trigger.addEventListener('click', () => {
+    dialogBody.append(widget);
+    dialog.showModal();
+  });
+  dialog.addEventListener('close', () => {
+    embeddedHost.append(widget);
+  });
   closeBtn.addEventListener('click', () => dialog.close());
 
   searchBtn.addEventListener('click', doSearch);
@@ -118,10 +164,21 @@ export function startApp(root: HTMLElement): void {
  * Toolbar handlers
  * ========================================================================= */
 
-/** Navigate to a search hash for the current input value and browse path. */
+/**
+ * Navigate to a search hash for the current input value and browse path.
+ *
+ * An empty (or whitespace-only) query clears the search instead: it navigates
+ * to the browse route for the current path so the server never receives an
+ * empty `query`, which it rejects with 400.
+ */
 function doSearch(): void {
   const path = normalizeRelativePath(getCurrentRoute().path);
-  navigate(toSearchHash(searchInput.value.trim(), path));
+  const query = searchInput.value.trim();
+  if (query === '') {
+    navigate(toBrowseHash(path));
+    return;
+  }
+  navigate(toSearchHash(query, path));
 }
 
 /** Upload every selected file to the current path, then clear + re-render. */
@@ -238,6 +295,7 @@ export function renderSearch(result: SearchResult, route: Route): void {
  */
 function buildTable(headers: string[]): HTMLTableElement {
   const table = document.createElement('table');
+  table.className = 'results-table';
   const thead = document.createElement('thead');
   const headRow = document.createElement('tr');
   for (const label of headers) {

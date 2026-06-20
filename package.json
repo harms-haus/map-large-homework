@@ -9,8 +9,11 @@
     "watch": "tsc --watch"
   },
   "devDependencies": {
+    "happy-dom": "^15.7.4",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.4",
-    "happy-dom": "^15.7.4"
+    "vitest": "^2.1.4"
+  },
+  "dependencies": {
+    "bootstrap-icons": "^1.13.1"
   }
 }

@@ -20,6 +20,48 @@ a:hover {
   text-decoration: underline;
 }
 
+/* ── Page layout ──
+   The app fills the viewport as a column so the embedded host (and therefore
+   the scrollable results) gets a definite height in both views. */
+html,
+body {
+  height: 100%;
+}
+#app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+/* ── File-browser widget + hosts ──
+   The widget is CHROMELESS: no border, background, or title of its own. It is
+   a flex column that fills whichever host renders it (the embedded host or the
+   dialog body), keeping the results area scrollable in both contexts. */
+.file-browser {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Embedded host: the primary, chromeless surface while the dialog is closed. */
+.file-browser-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Dialog body slot: the widget is moved here on open. Flexes to fill the
+   dialog's remaining height below the titlebar. */
+.browser-dialog .dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* ── Trigger button (toggle file browser) ── */
 .trigger {
   padding: 8px 16px;
@@ -35,17 +77,32 @@ a:hover {
 }
 
 /* ── Native <dialog> styling ── */
+/* Base chrome only (background/border/size/padding). Crucially we do NOT set
+   `display` here: a closed <dialog> is hidden by the UA rule
+   `dialog:not([open]) { display: none }`, but any author `display` declaration
+   overrides the UA sheet entirely and would keep the closed dialog (and thus
+   its frame/titlebar) visible on the page. The flex column layout is applied
+   ONLY to the open dialog below. */
 .browser-dialog {
   background: #252526;
   color: #e6e6e6;
   border: 1px solid #3c3c3c;
   border-radius: 8px;
-  max-width: 960px;
-  width: 90vw;
+  /* Fixed size, clamped so it never overflows small viewports. */
+  width: 960px;
+  max-width: 94vw;
+  height: 640px;
+  max-height: 90vh;
   padding: 16px;
   /* Remove default UA margin/padding */
   margin: auto;
   box-sizing: border-box;
+}
+/* Flex column layout only while open, so the closed dialog stays
+   `display: none` (hidden) and renders its frame only when shown. */
+.browser-dialog[open] {
+  display: flex;
+  flex-direction: column;
 }
 .browser-dialog::backdrop {
   background: rgba(0, 0, 0, 0.6);
@@ -53,17 +110,28 @@ a:hover {
 
 /* ── Header row ── */
 .dialog-header {
+  position: relative;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   margin-bottom: 12px;
 }
-.dialog-header h2 {
+/* Title is absolutely centered across the full dialog width so the close
+   button's width never offsets it. pointer-events:none keeps the centered
+   text from intercepting clicks meant for the button. */
+.dialog-header .title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
   margin: 0;
   font-size: 16px;
   font-weight: 600;
+  pointer-events: none;
 }
 .dialog-header .close-btn {
+  position: relative;
+  z-index: 1;
   background: none;
   border: none;
   color: #9a9a9a;
@@ -118,6 +186,7 @@ a:hover {
   font-size: 13px;
   outline: none;
   box-sizing: border-box;
+  margin-left: auto;
 }
 .toolbar input[type="search"]::placeholder,
 .toolbar input[type="text"]::placeholder {
@@ -148,9 +217,14 @@ a:hover {
   display: none;
 }
 
-/* ── Results container (scrollable) ── */
-.results-container {
-  max-height: 60vh;
+/* ── Results container (scrollable) ──
+   Grows to fill its host's remaining height (flex: 1) and scrolls when the
+   table body overflows. `min-height: 0` lets the flex item shrink below its
+   content so the scrollbar engages. The table header is made sticky below, so
+   only the body rows scroll. */
+.results {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   border: 1px solid #3c3c3c;
   border-radius: 4px;
@@ -165,7 +239,6 @@ a:hover {
 .results-table th,
 .results-table td {
   padding: 6px 8px;
-  border-bottom: 1px solid #3c3c3c;
   text-align: left;
   white-space: nowrap;
 }
@@ -176,6 +249,7 @@ a:hover {
   top: 0;
   background: #252526;
   z-index: 1;
+  border-bottom: 1px solid #3c3c3c;
 }
 .results-table tbody tr:hover {
   background: #2d2d30;

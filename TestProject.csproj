@@ -12,4 +12,30 @@
     <None Remove="TestProject.Tests/**" />
   </ItemGroup>
 
+  <!-- SPA build integration.
+
+       The frontend lives in /src (*.ts) and is compiled to /wwwroot/dist by the
+       `npm run build` script (tsc + scripts/copy-assets.mjs). Since wwwroot/dist is
+       gitignored, it must be (re)generated before the C# build so the static files
+       are present for `UseStaticFiles`/publish. These targets wire npm into the
+       MSBuild pipeline so `dotnet build` and `dotnet publish` are self-contained.
+
+       NpmInstall is incremental: it only runs when package.json or package-lock.json
+       change (or node_modules is absent). node_modules/.package-lock.json is npm's
+       own stamp file and serves as the output/up-to-date marker. -->
+  <Target Name="NpmInstall"
+          Inputs="package.json;package-lock.json"
+          Outputs="node_modules/.package-lock.json">
+    <Exec Command="npm install" WorkingDirectory="$(MSBuildProjectDirectory)" />
+  </Target>
+
+  <!-- NpmBuild always runs (tsc is fast and honors noEmitOnError), but only after
+       deps are in place. Runs before BeforeBuild so dist exists prior to CoreBuild
+       and static-asset copy during publish. -->
+  <Target Name="NpmBuild"
+          DependsOnTargets="NpmInstall"
+          BeforeTargets="BeforeBuild">
+    <Exec Command="npm run build" WorkingDirectory="$(MSBuildProjectDirectory)" />
+  </Target>
+
 </Project>

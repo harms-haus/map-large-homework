@@ -1,0 +1,9 @@
+Welcome to the File Browser sample root.
+
+Use this tree to try out:
+  - Browsing into nested folders
+  - Sorting by name / size / modified date
+  - Searching (try: report, meeting, sales, vacation, treasure)
+  - Deep-linking via the URL hash
+
+Everything here is sample data.
