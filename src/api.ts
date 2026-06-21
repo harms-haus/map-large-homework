@@ -83,7 +83,8 @@ export class ApiClient {
   private async request<T>(url: string, init?: RequestInit): Promise<T> {
     const res = await fetch(url, init);
     if (!res.ok) {
-      throw new Error(res.status + ': ' + (await res.text()));
+      const body = await res.text();
+      throw new Error(res.status + ': ' + body);
     }
     return (await res.json()) as T;
   }

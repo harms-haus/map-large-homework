@@ -1,23 +1,15 @@
 /**
- * Pure formatting helpers for the file browser UI.
- *
- * Every function in this module is side-effect free (no DOM access, no network)
- * so each can be unit-tested in isolation. The module exports ONLY the four
- * functions declared here.
+ * Pure formatting helpers for the file-browser UI. All side-effect free
+ * (no DOM, no network) so each is unit-testable in isolation.
  */
 
 /** Binary (1024-based) byte-unit suffixes, from bytes up to terabytes. */
 const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
 
 /**
- * Format a byte count as a human-readable string using binary (1024-based)
- * units.
- *
- * - Values below 1024 render as an integer byte count, e.g. `0 B`, `1023 B`.
- * - Values of 1024 and above render with exactly one decimal place, keeping a
- *   trailing `.0`, e.g. `1.0 KB`, `1.5 KB`, `1.0 MB`.
- *
- * The unit caps at `TB`; values beyond 1024 TB remain expressed in terabytes.
+ * Format a byte count using binary (1024-based) units. Values below 1024
+ * render as an integer byte count (`0 B`, `1023 B`); 1024 and above render
+ * with one decimal place (`1.0 KB`, `1.5 MB`). The unit caps at `TB`.
  */
 export function formatBytes(bytes: number): string {
   const units = BYTE_UNITS;
@@ -30,23 +22,17 @@ export function formatBytes(bytes: number): string {
   }
 
   if (unitIndex === 0) {
-    // Below the KB boundary: render as an integer byte count.
     return `${Math.round(value)} ${units[unitIndex]}`;
   }
 
-  // KB and above: one decimal place (trailing .0 preserved per spec).
   return `${value.toFixed(1)} ${units[unitIndex]}`;
 }
 
 /**
- * Normalize a relative path into a clean, slash-joined form.
- *
- * - backslashes (`\`) become forward slashes
- * - leading/trailing slashes are trimmed
- * - runs of repeated slashes collapse to one
- * - `.` and `..` segments are dropped (filtered out, NOT resolved against the
- *   parent — this also neutralizes path-traversal segments)
- * - empty/root input collapses to `""`
+ * Normalize a relative path: backslashes → forward slashes, leading/trailing
+ * slashes trimmed, runs of repeated slashes collapsed, and `.`/`..` segments
+ * dropped (filtered, not resolved — this also neutralizes path-traversal
+ * segments). Empty/root input collapses to `""`.
  */
 export function normalizeRelativePath(path: string): string {
   return path
@@ -69,11 +55,8 @@ function padTwo(value: number): string {
   return String(value).padStart(2, '0');
 }
 
-/**
- * Format an ISO 8601 date string as `yyyy-MM-dd HH:mm` (local calendar time).
- *
- * Returns `""` for empty or unparseable input instead of throwing.
- */
+/** Format an ISO 8601 date string as `yyyy-MM-dd HH:mm` (local calendar time).
+ *  Returns `""` for empty or unparseable input. */
 export function formatDate(iso: string): string {
   if (!iso) {
     return '';

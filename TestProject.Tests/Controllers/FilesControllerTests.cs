@@ -16,8 +16,8 @@ namespace TestProject.Tests.Controllers;
 /// on the returned <see cref="IActionResult"/>: the happy paths verify that
 /// the service is invoked with the normalized inputs and that the response
 /// payload has the documented shape, while the error paths verify that the
-/// three translated exception roots (and their subtypes) yield a 400 with the
-/// message.
+/// translated exception types yield their mapped HTTP status
+/// (400/403/404/409/500) with the message.
 ///
 /// The controller is exercised directly (not through the ASP.NET Core
 /// pipeline) so model-binding attributes like <c>[FromQuery]</c> are not
@@ -26,44 +26,33 @@ namespace TestProject.Tests.Controllers;
 public class FilesControllerTests
 {
     /// <summary>
-    /// The exception types the controller must catch and translate into a
-    /// <c>BadRequest</c>. The translation targets three root types —
-    /// <see cref="ArgumentException"/>, <see cref="UnauthorizedAccessException"/>
-    /// and <see cref="IOException"/> — and relies on inheritance to also catch
-    /// their subtypes. <see cref="DirectoryNotFoundException"/>,
-    /// <see cref="FileNotFoundException"/>, <see cref="PathTooLongException"/>,
-    /// <see cref="EndOfStreamException"/> and <see cref="FileLoadException"/> are
-    /// all <see cref="IOException"/> subtypes, so a single IOException branch
-    /// catches them all (the former two used to be enumerated explicitly but
-    /// are redundant); <see cref="ArgumentNullException"/> and
-    /// <see cref="ArgumentOutOfRangeException"/> are <see cref="ArgumentException"/>
-    /// subtypes. These cases pin that the inherited-subtype contract holds for
-    /// every translated root — not just the ones previously named by hand.
+    /// The exception types the controller translates, paired with the status
+    /// each maps to. Subtypes precede the generic <see cref="IOException"/>
+    /// catch-all.
     /// </summary>
-    public static IEnumerable<object[]> CaughtExceptions()
+    public static IEnumerable<object[]> TranslatedCases()
     {
-        // The three root types the controller documents and catches. Each must
-        // map to a 400 carrying its Message.
-        yield return new object[] { new ArgumentException("arg-message") };
-        yield return new object[] { new UnauthorizedAccessException("unauth-message") };
-        yield return new object[] { new IOException("io-message") };
+        // 400 — bad input (ArgumentException and its subtypes; PathTooLong).
+        yield return new object[] { new ArgumentException("arg-message"), StatusCodes.Status400BadRequest };
+        yield return new object[] { new ArgumentNullException("p", "argnull-message"), StatusCodes.Status400BadRequest };
+        yield return new object[] { new ArgumentOutOfRangeException("p", "argoor-message"), StatusCodes.Status400BadRequest };
+        yield return new object[] { new PathTooLongException("pathtoolong-message"), StatusCodes.Status400BadRequest };
 
-        // IOException subtypes that must be caught by virtue of inheritance.
-        // The translation names only the IOException root, so EVERY derived
-        // subtype must ALSO resolve to 400; exact-type matching would let these
-        // leak through unhandled. This pins the consolidation that folds the
-        // former explicit DirectoryNotFound/FileNotFound catches into the single
-        // IOException branch, and broadens coverage to BCL subtypes that were
-        // never named before (EndOfStream/FileLoad).
-        yield return new object[] { new DirectoryNotFoundException("dir-message") };
-        yield return new object[] { new FileNotFoundException("file-message") };
-        yield return new object[] { new PathTooLongException("pathtoolong-message") };
-        yield return new object[] { new EndOfStreamException("endofstream-message") };
-        yield return new object[] { new FileLoadException("fileload-message") };
+        // 403 — forbidden.
+        yield return new object[] { new UnauthorizedAccessException("unauth-message"), StatusCodes.Status403Forbidden };
 
-        // ArgumentException subtypes, same inheritance contract.
-        yield return new object[] { new ArgumentNullException("p", "argnull-message") };
-        yield return new object[] { new ArgumentOutOfRangeException("p", "argoor-message") };
+        // 404 — IOException subtypes carved out before the generic IOException arm.
+        yield return new object[] { new FileNotFoundException("file-message"), StatusCodes.Status404NotFound };
+        yield return new object[] { new DirectoryNotFoundException("dir-message"), StatusCodes.Status404NotFound };
+
+        // 409 — collision.
+        yield return new object[] { new ConflictException("conflict-message"), StatusCodes.Status409Conflict };
+
+        // 500 — the catch-all IOException arm. EndOfStream/FileLoad are
+        // IOException subtypes not carved out above.
+        yield return new object[] { new IOException("io-message"), StatusCodes.Status500InternalServerError };
+        yield return new object[] { new EndOfStreamException("endofstream-message"), StatusCodes.Status500InternalServerError };
+        yield return new object[] { new FileLoadException("fileload-message"), StatusCodes.Status500InternalServerError };
     }
 
     private static FilesController CreateController(FakeFileService service)
@@ -76,6 +65,17 @@ public class FilesControllerTests
         var property = instance.GetType().GetProperty(name);
         Assert.NotNull(property);
         return property!.GetValue(instance);
+    }
+
+    /// <summary>Casts to <see cref="ObjectResult"/>. Every status the
+    /// controller returns (400/403/404/409/500) derives from it, so status and
+    /// the <c>{ error }</c> body assert uniformly. Uses <c>as</c> rather than
+    /// <see cref="Assert.IsType{T}"/> to accept the derived result types.</summary>
+    private static ObjectResult AsObjectResult(IActionResult result)
+    {
+        var objectResult = result as ObjectResult;
+        Assert.NotNull(objectResult);
+        return objectResult!;
     }
 
     /// <summary>
@@ -135,17 +135,17 @@ public class FilesControllerTests
     }
 
     [Theory]
-    [MemberData(nameof(CaughtExceptions))]
-    public void Browse_WhenServiceThrows_ReturnsBadRequest400_WithErrorMessage(Exception ex)
+    [MemberData(nameof(TranslatedCases))]
+    public void Browse_WhenServiceThrows_ReturnsTranslatedStatus_WithErrorMessage(Exception ex, int expectedStatus)
     {
         var fake = new FakeFileService { BrowseException = ex };
         var controller = CreateController(fake);
 
         var actionResult = controller.Browse("any");
 
-        var badRequest = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
-        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
-        Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+        var objectResult = AsObjectResult(actionResult.Result);
+        Assert.Equal(expectedStatus, objectResult.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(objectResult.Value!, "error"));
     }
 
     // =====================================================================
@@ -205,17 +205,17 @@ public class FilesControllerTests
     }
 
     [Theory]
-    [MemberData(nameof(CaughtExceptions))]
-    public void Search_WhenServiceThrows_ReturnsBadRequest400_WithErrorMessage(Exception ex)
+    [MemberData(nameof(TranslatedCases))]
+    public void Search_WhenServiceThrows_ReturnsTranslatedStatus_WithErrorMessage(Exception ex, int expectedStatus)
     {
         var fake = new FakeFileService { SearchException = ex };
         var controller = CreateController(fake);
 
         var actionResult = controller.Search("q", "p");
 
-        var badRequest = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
-        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
-        Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+        var objectResult = AsObjectResult(actionResult.Result);
+        Assert.Equal(expectedStatus, objectResult.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(objectResult.Value!, "error"));
     }
 
     // =====================================================================
@@ -260,8 +260,8 @@ public class FilesControllerTests
     // Upload_PassesRawPathToService_EvenWhenNonCanonical).
 
     [Theory]
-    [MemberData(nameof(CaughtExceptions))]
-    public async Task Upload_WhenServiceThrows_ReturnsBadRequest400_WithErrorMessage(Exception ex)
+    [MemberData(nameof(TranslatedCases))]
+    public async Task Upload_WhenServiceThrows_ReturnsTranslatedStatus_WithErrorMessage(Exception ex, int expectedStatus)
     {
         var fake = new FakeFileService { UploadException = ex };
         var controller = CreateController(fake);
@@ -269,9 +269,9 @@ public class FilesControllerTests
 
         var result = await controller.Upload("docs", file);
 
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
-        Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+        var objectResult = AsObjectResult(result);
+        Assert.Equal(expectedStatus, objectResult.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(objectResult.Value!, "error"));
     }
 
     // =====================================================================
@@ -368,17 +368,17 @@ public class FilesControllerTests
     }
 
     [Theory]
-    [MemberData(nameof(CaughtExceptions))]
-    public void Download_WhenResolveThrows_ReturnsBadRequest400_WithErrorMessage(Exception ex)
+    [MemberData(nameof(TranslatedCases))]
+    public void Download_WhenResolveThrows_ReturnsTranslatedStatus_WithErrorMessage(Exception ex, int expectedStatus)
     {
         var fake = new FakeFileService { ResolveException = ex };
         var controller = CreateController(fake);
 
         var result = controller.Download("any");
 
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
-        Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+        var objectResult = AsObjectResult(result);
+        Assert.Equal(expectedStatus, objectResult.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(objectResult.Value!, "error"));
     }
 
     // The Download endpoint derives the response content type from the
@@ -551,17 +551,17 @@ public class FilesControllerTests
     }
 
     [Theory]
-    [MemberData(nameof(CaughtExceptions))]
-    public void Delete_WhenServiceThrows_ReturnsBadRequest400_WithErrorMessage(Exception ex)
+    [MemberData(nameof(TranslatedCases))]
+    public void Delete_WhenServiceThrows_ReturnsTranslatedStatus_WithErrorMessage(Exception ex, int expectedStatus)
     {
         var fake = new FakeFileService { DeleteException = ex };
         var controller = CreateController(fake);
 
         var result = controller.Delete("any");
 
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
-        Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+        var objectResult = AsObjectResult(result);
+        Assert.Equal(expectedStatus, objectResult.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(objectResult.Value!, "error"));
     }
 
     // =====================================================================
@@ -594,17 +594,17 @@ public class FilesControllerTests
     }
 
     [Theory]
-    [MemberData(nameof(CaughtExceptions))]
-    public void Move_WhenServiceThrows_ReturnsBadRequest400_WithErrorMessage(Exception ex)
+    [MemberData(nameof(TranslatedCases))]
+    public void Move_WhenServiceThrows_ReturnsTranslatedStatus_WithErrorMessage(Exception ex, int expectedStatus)
     {
         var fake = new FakeFileService { MoveException = ex };
         var controller = CreateController(fake);
 
         var result = controller.Move(new MoveRequest("a", "b"));
 
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
-        Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+        var objectResult = AsObjectResult(result);
+        Assert.Equal(expectedStatus, objectResult.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(objectResult.Value!, "error"));
     }
 
     // =====================================================================
@@ -637,17 +637,17 @@ public class FilesControllerTests
     }
 
     [Theory]
-    [MemberData(nameof(CaughtExceptions))]
-    public void Copy_WhenServiceThrows_ReturnsBadRequest400_WithErrorMessage(Exception ex)
+    [MemberData(nameof(TranslatedCases))]
+    public void Copy_WhenServiceThrows_ReturnsTranslatedStatus_WithErrorMessage(Exception ex, int expectedStatus)
     {
         var fake = new FakeFileService { CopyException = ex };
         var controller = CreateController(fake);
 
         var result = controller.Copy(new CopyRequest("a", "b"));
 
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
-        Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+        var objectResult = AsObjectResult(result);
+        Assert.Equal(expectedStatus, objectResult.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(objectResult.Value!, "error"));
     }
 
     // =====================================================================
@@ -714,17 +714,17 @@ public class FilesControllerTests
     }
 
     [Theory]
-    [MemberData(nameof(CaughtExceptions))]
-    public void CreateDirectory_WhenServiceThrows_ReturnsBadRequest400_WithErrorMessage(Exception ex)
+    [MemberData(nameof(TranslatedCases))]
+    public void CreateDirectory_WhenServiceThrows_ReturnsTranslatedStatus_WithErrorMessage(Exception ex, int expectedStatus)
     {
         var fake = new FakeFileService { CreateDirectoryException = ex };
         var controller = CreateController(fake);
 
         var result = controller.CreateDirectory("any");
 
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
-        Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+        var objectResult = AsObjectResult(result);
+        Assert.Equal(expectedStatus, objectResult.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(objectResult.Value!, "error"));
     }
 
     // =====================================================================
@@ -732,7 +732,7 @@ public class FilesControllerTests
     //
     // The shared Execute/ExecuteAsync helper must not widen the catch list —
     // a stray `catch (Exception ex)` or `when (...)` filter, or catching a
-    // base type too eagerly, would silently turn every fault into a 400.
+    // base type too eagerly, would silently turn every fault into a translated response.
     // Only Delete is covered above; the tests below pin the same "unhandled
     // exception bubbles out" guarantee for the remaining six endpoints.
     //
@@ -817,7 +817,7 @@ public class FilesControllerTests
     [Fact]
     public void BadRequest_PayloadHasExactlyOneStringPropertyNamedError()
     {
-        var fake = new FakeFileService { DeleteException = new IOException("io-message") };
+        var fake = new FakeFileService { DeleteException = new ArgumentException("arg-message") };
         var controller = CreateController(fake);
 
         var result = controller.Delete("any");
@@ -826,7 +826,7 @@ public class FilesControllerTests
         Assert.NotNull(badRequest.Value);
         var property = AssertSingleProperty(badRequest.Value!, "error");
         Assert.Equal(typeof(string), property.PropertyType);
-        Assert.Equal("io-message", property.GetValue(badRequest.Value));
+        Assert.Equal("arg-message", property.GetValue(badRequest.Value));
     }
 
     [Theory]
@@ -839,10 +839,10 @@ public class FilesControllerTests
     [InlineData("path with /slashes/ and\\backslashes")]
     public void BadRequest_PreservesExceptionMessageVerbatim(string message)
     {
-        // The exception message must be copied verbatim into the response —
-        // no trimming, HTML-encoding, JSON-escaping at the controller layer,
-        // or truncation. The serializer handles encoding downstream.
-        var fake = new FakeFileService { DeleteException = new IOException(message) };
+        // The message is copied into the { error } body verbatim; the
+        // serializer handles encoding downstream. Built identically in every
+        // status arm — asserted against the 400 path.
+        var fake = new FakeFileService { DeleteException = new ArgumentException(message) };
         var controller = CreateController(fake);
 
         var result = controller.Delete("any");
@@ -854,50 +854,40 @@ public class FilesControllerTests
     // =====================================================================
     // Exception-translation consolidation contract.
     //
-    // Execute (sync) and ExecuteAsync (async) translate exactly three "root"
-    // exception types into a 400 — ArgumentException, UnauthorizedAccessException
-    // and IOException — and let every other type propagate. The former explicit
-    // DirectoryNotFound/FileNotFound catches are redundant (both are IOException
-    // subtypes); a single IOException branch handles them by inheritance. The
-    // tests below pin the inheritance contract for non-BCL derived types, the
-    // precise catch-list boundary (no widening), and parity between the sync
-    // and async code paths once they are folded onto one shared translator.
+    // Execute (sync) and ExecuteAsync (async) share one TranslateException.
+    // The tests below pin: inheritance matching for non-BCL derived types, the
+    // catch-list boundary (no widening), and sync/async parity.
     // =====================================================================
 
     [Theory]
     [MemberData(nameof(CustomTranslatedSubclasses))]
-    public void Translate_CatchesNonBclSubclasses_ByInheritance(Exception ex)
+    public void Translate_CatchesNonBclSubclasses_ByInheritance(Exception ex, int expectedStatus)
     {
-        // The translation branches must match by inheritance (is-a), not by
-        // exact runtime type: a non-BCL exception derived from IOException or
-        // ArgumentException must still resolve to 400. Exact-type matching
-        // (`ex.GetType() == typeof(IOException)`) would let these propagate.
+        // Matching is by inheritance, not exact runtime type.
         var fake = new FakeFileService { DeleteException = ex };
         var controller = CreateController(fake);
 
-        var result = controller.Delete("any");
+        var objectResult = AsObjectResult(controller.Delete("any"));
 
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
-        Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+        Assert.Equal(expectedStatus, objectResult.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(objectResult.Value!, "error"));
     }
 
     public static IEnumerable<object[]> CustomTranslatedSubclasses()
     {
-        yield return new object[] { new CustomIOException("custom-io") };
-        yield return new object[] { new CustomArgumentException("custom-arg") };
+        // CustomIOException falls through to the generic IOException arm → 500;
+        // CustomArgumentException inherits the ArgumentException arm → 400.
+        yield return new object[] { new CustomIOException("custom-io"), StatusCodes.Status500InternalServerError };
+        yield return new object[] { new CustomArgumentException("custom-arg"), StatusCodes.Status400BadRequest };
     }
 
     [Theory]
     [MemberData(nameof(NonTranslatedExceptions))]
     public void Translate_PropagatesExceptionsOutsideTheTranslatedRoots(Exception ex)
     {
-        // The catch list must stay exactly { ArgumentException,
-        // UnauthorizedAccessException, IOException }. Widening it — e.g. a stray
-        // `catch (Exception ...)` that forgets to re-throw, or catching a common
-        // base like SystemException — would silently turn these into 400s and
-        // hide real faults. Each must surface as the exact same instance thrown
-        // by the service, unwrapped (no TargetInvocation/Aggregate wrapping).
+        // Widening the catch list would silently translate these into responses
+        // and hide real faults. Each surfaces as the exact instance thrown,
+        // unwrapped (no TargetInvocation/Aggregate wrapping).
         var fake = new FakeFileService { DeleteException = ex };
         var controller = CreateController(fake);
 
@@ -925,39 +915,31 @@ public class FilesControllerTests
 
     [Theory]
     [MemberData(nameof(TranslatedRoots))]
-    public async Task SyncAndAsyncHelpers_TranslateTheSameExceptionIdentically(Exception ex)
+    public async Task SyncAndAsyncHelpers_TranslateTheSameExceptionIdentically(Exception ex, int expectedStatus)
     {
-        // After the refactor Execute (sync) and ExecuteAsync (async) share one
-        // TranslateException method. This pins that the two paths agree on
-        // status code and message for every translated root AND a representative
-        // subtype of each root (so inherited types translate identically too,
-        // not just the named roots). A divergence here would mean the two
-        // former catch blocks were not actually unified.
+        // The sync and async paths share TranslateException; both must agree
+        // on status and message for every root and a representative subtype.
         var syncController = CreateController(new FakeFileService { DeleteException = ex });
         var asyncController = CreateController(new FakeFileService { UploadException = ex });
 
-        var syncResult = syncController.Delete("any");
-        var asyncResult = await asyncController.Upload(
-            "any", FormFileFactory.CreateFormFile("f.txt", "x"));
+        var syncResult = AsObjectResult(syncController.Delete("any"));
+        var asyncResult = AsObjectResult(await asyncController.Upload(
+            "any", FormFileFactory.CreateFormFile("f.txt", "x")));
 
-        var syncBad = Assert.IsType<BadRequestObjectResult>(syncResult);
-        var asyncBad = Assert.IsType<BadRequestObjectResult>(asyncResult);
-
-        Assert.Equal(StatusCodes.Status400BadRequest, syncBad.StatusCode);
-        Assert.Equal(StatusCodes.Status400BadRequest, asyncBad.StatusCode);
-        Assert.Equal(ex.Message, GetProperty(syncBad.Value!, "error"));
-        Assert.Equal(ex.Message, GetProperty(asyncBad.Value!, "error"));
+        Assert.Equal(expectedStatus, syncResult.StatusCode);
+        Assert.Equal(expectedStatus, asyncResult.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(syncResult.Value!, "error"));
+        Assert.Equal(ex.Message, GetProperty(asyncResult.Value!, "error"));
     }
 
     public static IEnumerable<object[]> TranslatedRoots()
     {
-        // One case per translated root, plus one representative subtype each,
-        // so the sync/async parity check covers inherited types as well.
-        yield return new object[] { new ArgumentException("arg") };
-        yield return new object[] { new UnauthorizedAccessException("unauth") };
-        yield return new object[] { new IOException("io") };
-        yield return new object[] { new ArgumentNullException("p", "argnull") };
-        yield return new object[] { new PathTooLongException("ptl") };
+        // One root plus a representative subtype each, paired with its status.
+        yield return new object[] { new ArgumentException("arg"), StatusCodes.Status400BadRequest };
+        yield return new object[] { new UnauthorizedAccessException("unauth"), StatusCodes.Status403Forbidden };
+        yield return new object[] { new IOException("io"), StatusCodes.Status500InternalServerError };
+        yield return new object[] { new ArgumentNullException("p", "argnull"), StatusCodes.Status400BadRequest };
+        yield return new object[] { new PathTooLongException("ptl"), StatusCodes.Status400BadRequest };
     }
 
     // =====================================================================

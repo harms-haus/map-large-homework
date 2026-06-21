@@ -17,8 +17,7 @@ const DEFAULT_ROUTE: Route = { view: 'browse', path: '', query: '' };
  */
 export function parseHash(hash: string): Route {
   if (hash.startsWith('#/browse')) {
-    const afterPrefix = hash.slice('#/browse'.length); // everything after "#/browse"
-    // Remove the leading '/' if present, then URL-decode what remains
+    const afterPrefix = hash.slice('#/browse'.length);
     const path = afterPrefix.startsWith('/')
       ? decodeURIComponent(afterPrefix.slice(1))
       : decodeURIComponent(afterPrefix);
@@ -37,8 +36,8 @@ export function parseHash(hash: string): Route {
 }
 
 /**
- * Serialize a browse path into a browse hash.
- * Each segment is independently percent-encoded.
+ * Serialize a browse path into a browse hash. Each segment is independently
+ * percent-encoded.
  */
 export function toBrowseHash(path: string): string {
   if (path === '') {
@@ -50,24 +49,19 @@ export function toBrowseHash(path: string): string {
 }
 
 /**
- * Serialize query and path values into a search hash.
- * Both values are percent-encoded.
+ * Serialize query and path into a search hash. Both values are
+ * percent-encoded.
  */
 export function toSearchHash(query: string, path: string): string {
   return `#/search?q=${encodeURIComponent(query)}&path=${encodeURIComponent(path)}`;
 }
 
-/**
- * Read the current route from window.location.hash.
- */
+/** Read the current route from window.location.hash. */
 export function getCurrentRoute(): Route {
   return parseHash(window.location.hash);
 }
 
-/**
- * Subscribe to hash-change events.
- * Returns an unsubscribe function.
- */
+/** Subscribe to hash-change events. Returns an unsubscribe function. */
 export function subscribe(callback: () => void): () => void {
   window.addEventListener('hashchange', callback);
   return () => {
@@ -75,9 +69,7 @@ export function subscribe(callback: () => void): () => void {
   };
 }
 
-/**
- * Navigate to a given hash (sets window.location.hash).
- */
+/** Navigate to a given hash (sets window.location.hash). */
 export function navigate(hash: string): void {
   window.location.hash = hash;
 }

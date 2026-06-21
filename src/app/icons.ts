@@ -1,21 +1,19 @@
 /**
  * Bootstrap Icons glyph and action-button builders.
  *
- * `makeIcon` produces the empty `<i class="bi bi-<name>">` element whose glyph
- * is painted by the bootstrap-icons stylesheet's `::before` pseudo-element, and
- * `makeActionButton` produces the `<button class="btn">` used by every menu
- * item (the row ⋮ menu, the right-click row menu, and the directory context
- * menu). Both insert user-controlled text via element creation / text nodes —
- * never `innerHTML` — to prevent HTML injection.
+ * `makeIcon` produces an empty `<i class="bi bi-<name>">` whose glyph is
+ * painted by the bootstrap-icons stylesheet, and `makeActionButton` produces
+ * the `<button class="btn">` used by every menu item. Both insert
+ * user-controlled text via element creation / text nodes — never
+ * `innerHTML`.
  */
 import { getStatus } from './context.js';
 
 /**
  * Build a Bootstrap Icons glyph element: an empty `<i class="bi bi-<name>">`.
- * The glyph itself is painted by the bootstrap-icons stylesheet's `::before`
- * pseudo-element (content set in CSS), so the element has NO text content of
- * its own — which keeps `textContent` assertions on the parent (e.g. a menu
- * item whose visible label is "Download") unchanged.
+ * The glyph is painted by the stylesheet, so the element has no text content
+ * of its own — keeping parent `textContent` assertions (e.g. a menu item whose
+ * label is "Download") unchanged.
  */
 export function makeIcon(name: string): HTMLElement {
   const icon = document.createElement('i');
@@ -24,17 +22,11 @@ export function makeIcon(name: string): HTMLElement {
 }
 
 /**
- * Build a `<button class="btn">` with the given label and click handler, and an
- * optional leading Bootstrap Icons glyph.
- *
- * The handler is wrapped so that any synchronous throw or promise rejection
- * surfaces the error via the status footer — consistent with how `render()`
- * already displays fetch errors. On normal resolution no error message is
- * shown.
- *
- * When `icon` is given it is prepended as `makeIcon(icon)` (an empty `<i>`),
- * followed by the label as a bare text node — so the button's `textContent`
- * remains exactly `label` and its `className` stays exactly `"btn"`.
+ * Build a `<button class="btn">` with `label` and click `handler`, plus an
+ * optional leading glyph. The handler is wrapped so any synchronous throw or
+ * promise rejection surfaces in the status footer (consistent with how
+ * `render()` displays fetch errors). The icon is an empty `<i>` and the label
+ * a bare text node, so the button's `textContent` stays exactly `label`.
  */
 export function makeActionButton(
   label: string,
@@ -49,12 +41,16 @@ export function makeActionButton(
   }
   btn.append(label);
   btn.addEventListener('click', () => {
+    // Surface both synchronous throws and async rejections from the handler in
+    // the status footer, consistent with how render() displays fetch errors.
+    const reportError = (err: unknown): void => {
+      const message = err instanceof Error ? err.message : String(err);
+      getStatus().textContent = 'Error: ' + message;
+    };
     try {
-      Promise.resolve(handler()).catch((err: unknown) => {
-        getStatus().textContent = 'Error: ' + (err instanceof Error ? err.message : String(err));
-      });
+      Promise.resolve(handler()).catch(reportError);
     } catch (err) {
-      getStatus().textContent = 'Error: ' + (err instanceof Error ? err.message : String(err));
+      reportError(err);
     }
   });
   return btn;

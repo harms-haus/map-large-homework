@@ -6,27 +6,20 @@ namespace TestProject.Services;
 /// <summary>
 /// Encapsulates the home-directory root and the path-sandboxing logic that
 /// confines every file-system operation to it. The root path is computed at
-/// construction time, but the directory itself is created lazily on first
-/// access of <see cref="Root"/> so that disk I/O (and any failure it might
-/// raise) is decoupled from DI resolution: a misconfigured path surfaces on
-/// the first request rather than at startup. Any relative path that
-/// normalizes to a location outside the home root causes an
-/// <see cref="ArgumentException"/> to be thrown before any disk access.
+/// construction, but the directory is created lazily on first access of
+/// <see cref="Root"/>, so disk I/O (and any failure it raises) is decoupled
+/// from DI resolution: a misconfigured path surfaces on the first request
+/// rather than at startup. Any path that normalizes outside the root throws
+/// <see cref="ArgumentException"/> before any disk access.
 /// </summary>
 internal sealed class HomeRoot
 {
     private readonly Lazy<string> _rootLazy;
 
-    /// <summary>
-    /// Captures the resolved-path computation without executing it. Creating
-    /// the directory (and surfacing any I/O failure) is deferred to first use
-    /// via the <see cref="Lazy{T}"/>, which is constructed with
-    /// <see cref="LazyThreadSafetyMode.ExecutionAndPublication"/> so the
-    /// directory is materialized exactly once even under concurrent
-    /// first-access.
-    /// </summary>
     public HomeRoot(IWebHostEnvironment env, FileServiceOptions options)
     {
+        // Lazy with ExecutionAndPublication materializes the directory exactly
+        // once even under concurrent first-access.
         _rootLazy = new Lazy<string>(
             () =>
             {
@@ -39,17 +32,14 @@ internal sealed class HomeRoot
             LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
-    /// <summary>
-    /// The resolved home root, materializing it (creating the directory on
-    /// disk) on first access.
-    /// </summary>
+    /// <summary>The resolved home root, creating the directory on first access.</summary>
     public string Root => _rootLazy.Value;
 
     /// <summary>
-    /// Combines the home root with <paramref name="relativePath"/>, normalizes
-    /// the result, and verifies it stays within the root. A null, empty, or
-    /// whitespace path resolves to the root itself. Anything that escapes the
-    /// root throws <see cref="ArgumentException"/>.
+    /// Combines the root with <paramref name="relativePath"/>, normalizes the
+    /// result, and verifies it stays within the root. A null/empty/whitespace
+    /// path resolves to the root itself; anything escaping throws
+    /// <see cref="ArgumentException"/>.
     /// </summary>
     public string SafeResolve(string relativePath)
     {
@@ -75,7 +65,7 @@ internal sealed class HomeRoot
 
     /// <summary>
     /// Converts an absolute path inside the root to a forward-slash relative
-    /// path. The root itself becomes the empty string.
+    /// path; the root itself becomes the empty string.
     /// </summary>
     public string ToRelative(string full)
     {
@@ -87,9 +77,9 @@ internal sealed class HomeRoot
     }
 
     /// <summary>
-    /// Computes the normalized (forward-slash) parent of a relative path.
-    /// Returns <c>null</c> when <paramref name="relative"/> is the root (empty),
-    /// or the empty string when the path is a direct child of the root.
+    /// Normalized (forward-slash) parent of a relative path: <c>null</c> when
+    /// <paramref name="relative"/> is the root (empty), or the empty string
+    /// when the path is a direct child of the root.
     /// </summary>
     public static string? ComputeParent(string relative)
     {

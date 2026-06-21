@@ -1326,6 +1326,26 @@ public class FileServiceTests : IDisposable
         Assert.Throws<ArgumentException>(() => service.CreateDirectory("../escape"));
     }
 
+    /// <summary>
+    /// Creating a directory over an existing *file* throws
+    /// <see cref="ConflictException"/> (→ 409); the file is untouched. An
+    /// existing *directory* remains an idempotent no-op.
+    /// </summary>
+    [Fact]
+    public async Task CreateDirectory_OverExistingFile_ThrowsConflictException()
+    {
+        var (service, root) = CreateService();
+        service.ResolveFullPath("");
+        var file = Path.Combine(root, "conflict");
+        await File.WriteAllTextAsync(file, "keep-me");
+
+        var ex = Assert.Throws<ConflictException>(() => service.CreateDirectory("conflict"));
+        Assert.Equal("A file with this name already exists", ex.Message);
+
+        // The pre-existing file is untouched.
+        Assert.Equal("keep-me", await File.ReadAllTextAsync(file));
+    }
+
     // =====================================================================
     // Move
     // =====================================================================
@@ -1433,13 +1453,12 @@ public class FileServiceTests : IDisposable
     }
 
     /// <summary>
-    /// Moving onto an existing destination file is rejected by
-    /// <see cref="File.Move(string,string)"/> (no overwrite). The create-parent
-    /// step must still succeed; the failure comes from the move itself, leaving
-    /// both files unaltered.
+    /// Moving onto an existing destination throws <see cref="ConflictException"/>
+    /// (→ 409). Checked before the parent is created or the move runs, so
+    /// neither file is altered.
     /// </summary>
     [Fact]
-    public async Task Move_DestinationFileAlreadyExists_ThrowsIOException()
+    public async Task Move_DestinationAlreadyExists_ThrowsConflictException()
     {
         var (service, root) = CreateService();
         // Materialize the lazily-created home root so fixtures can be written into it.
@@ -1447,7 +1466,8 @@ public class FileServiceTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(root, "src.txt"), "1");
         await File.WriteAllTextAsync(Path.Combine(root, "dst.txt"), "2");
 
-        Assert.Throws<IOException>(() => service.Move(new MoveRequest("src.txt", "dst.txt")));
+        var ex = Assert.Throws<ConflictException>(() => service.Move(new MoveRequest("src.txt", "dst.txt")));
+        Assert.Equal("Destination already exists", ex.Message);
 
         // Neither file is altered.
         Assert.Equal("1", await File.ReadAllTextAsync(Path.Combine(root, "src.txt")));
@@ -1545,7 +1565,7 @@ public class FileServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Copy_DoesNotOverwriteExistingDestination_ThrowsIOException()
+    public async Task Copy_DoesNotOverwriteExistingDestination_ThrowsConflictException()
     {
         var (service, root) = CreateService();
         // Materialize the lazily-created home root so fixtures can be written into it.
@@ -1553,7 +1573,8 @@ public class FileServiceTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(root, "a.txt"), "1");
         await File.WriteAllTextAsync(Path.Combine(root, "b.txt"), "2");
 
-        Assert.Throws<IOException>(() => service.Copy(new CopyRequest("a.txt", "b.txt")));
+        var ex = Assert.Throws<ConflictException>(() => service.Copy(new CopyRequest("a.txt", "b.txt")));
+        Assert.Equal("Destination already exists", ex.Message);
 
         // Source untouched, destination unchanged.
         Assert.Equal("1", await File.ReadAllTextAsync(Path.Combine(root, "a.txt")));

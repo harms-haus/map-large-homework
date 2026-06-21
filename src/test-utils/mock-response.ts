@@ -1,22 +1,13 @@
 /**
- * Builds a minimal fetch `Response` stand-in for the mocked global `fetch`.
+ * Minimal fetch `Response` stand-in for the mocked global `fetch`.
  *
  * `text()` returns the raw text (defaults to the JSON-stringified body).
- * `json()` returns the parsed body when one is provided; otherwise it falls
- * back to parsing `text` as JSON (when only `text` was given), and finally to
- * an empty object. `ok` is derived from `status` (true for any 2xx) unless an
- * explicit `ok` is supplied, in which case it wins.
+ * `json()` returns the parsed `body` when supplied, otherwise parses `text` as
+ * JSON, finally falling back to `{}`. `ok` is derived from `status` (true for
+ * any 2xx) unless given explicitly.
  *
- * The `json()` method prefers an explicit `body` when supplied. When only
- * `text` was given, it parses the text as JSON; when neither is supplied it
- * falls back to an empty object `{}`. (No call site actually relies on this
- * branch: on the error path `ApiClient.request` only reads `.text()`, and on
- * the success path a `body` is always supplied.) The behavior is pinned by the
- * `mockResponse helper` characterization suite in `src/api.test.ts`.
- *
- * Test-only utility: deliberately kept out of the production `tsc` build via
- * the `src/test-utils/**` glob in `tsconfig.json`'s `exclude` array, so it is
- * never shipped to `wwwroot/dist`. Only test files import it.
+ * Test-only: excluded from the production build via the `src/test-utils/**`
+ * glob in `tsconfig.json`'s `exclude`, so it never ships to `wwwroot/dist`.
  */
 export interface MockResponseOptions {
   ok?: boolean;

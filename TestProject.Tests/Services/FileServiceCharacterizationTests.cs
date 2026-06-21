@@ -331,13 +331,12 @@ public class FileServiceCharacterizationTests : IDisposable
     }
 
     /// <summary>
-    /// The no-overwrite contract applies inside the recursive directory copy:
-    /// when a file in the source would overwrite an existing file at the
-    /// destination, the copy throws <see cref="IOException"/> and leaves both
-    /// the source and the pre-existing destination file unaltered.
+    /// Copying onto an existing destination throws <see cref="ConflictException"/>
+    /// (→ 409). Checked before the recursive copy begins, so both source and
+    /// the pre-existing destination file are unaltered.
     /// </summary>
     [Fact]
-    public async Task Copy_DirectoryWithConflictingDestinationFile_ThrowsIOException_AndDoesNotOverwrite()
+    public async Task Copy_DirectoryWithConflictingDestinationFile_ThrowsConflictException_AndDoesNotOverwrite()
     {
         var (service, root) = CreateService();
         Directory.CreateDirectory(Path.Combine(root, "src"));
@@ -346,7 +345,7 @@ public class FileServiceCharacterizationTests : IDisposable
         Directory.CreateDirectory(Path.Combine(root, "dst"));
         await File.WriteAllTextAsync(Path.Combine(root, "dst", "shared.txt"), "old");
 
-        Assert.Throws<IOException>(() =>
+        Assert.Throws<ConflictException>(() =>
             service.Copy(new CopyRequest("src", "dst")));
 
         // Source untouched, destination file not overwritten.

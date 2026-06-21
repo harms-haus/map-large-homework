@@ -21,7 +21,7 @@
  *    (module-level element refs), so every test calls `setupCleared()` first.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { renderSearch } from '../app';
+import { renderSearch } from './render-search';
 import type { FileEntry } from '../api';
 import { toBrowseHash } from '../router';
 import {

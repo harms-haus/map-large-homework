@@ -1,26 +1,10 @@
 /**
  * Row-menu and directory-context-menu lifecycle and viewport-edge positioning.
  *
- * This module owns the entire open/close lifecycle shared by EVERY menu in the
- * browse view (the per-row ⋮ dropdown, the right-click row menu, and the
- * current-directory blank-space menu), plus the pure off-screen flip/clamp
- * placement math (`computeMenuPosition`) and the per-mount single-open state
- * (`createMenuState` / `MenuState`).
- *
- * Placement highlights preserved here:
- *  - `computeMenuPosition` opens a menu below + left-aligned with its anchor by
- *    default and flips direction (down→up, left→right) when that would run off
- *    the viewport, finally clamping to at least `MENU_EDGE_MARGIN`. It is pure
- *    (no DOM access) so the flip behavior is unit-testable in isolation.
- *  - `createMenu` implements the WAI-ARIA Menu Button keyboard contract
- *    (ArrowDown/ArrowUp move focus with wrapping, Home/End jump to the ends,
- *    Escape and an outside document click close the menu).
- *  - The per-mount `MenuState` enforces the single-open invariant: at most one
- *    row menu is open at a time within a mount.
- *
- * Menu action items are built with `makeActionButton` / `makeIcon` from
- * `./icons.js`; the mutation handlers re-render via the context's render hook
- * and surface errors through the shared status footer.
+ * Owns the open/close lifecycle shared by every browse-view menu (the per-row
+ * ⋮ dropdown, the right-click row menu, and the blank-space directory menu),
+ * plus the pure placement math (`computeMenuPosition`) and the per-mount
+ * single-open state (`createMenuState` / `MenuState`).
  */
 import type { FileEntry } from '../api.js';
 import { joinPath, normalizeRelativePath } from '../format.js';
@@ -28,23 +12,10 @@ import { getApi, rerender } from './context.js';
 import { makeActionButton, makeIcon } from './icons.js';
 import { pickAndUploadInto } from './toolbar-handlers.js';
 
-/* -------------------------------------------------------------------------
- * Row action menu open/close state — per-mount (see MenuState below).
- *
- * At most one row menu (the "⋮" dropdown OR a right-click context menu) is
- * open at a time within a mount. The state is encapsulated in a fresh
- * {@link MenuState} created per `startApp` mount (via {@link createMenuState},
- * threaded through the shared context) rather than module-level singletons, so
- * a re-mount never inherits a previous mount's open-menu references: opening a
- * menu in mount #2 cannot call mount #1's stale close function and hide its
- * (now-detached) menu. The single-open invariant still spans every row in the
- * table — just scoped to the mount that owns the state.
- * ---------------------------------------------------------------------- */
-
 /**
- * The rectangle a row menu is anchored to: either the ⋮ button's own rect
- * (click) or a zero-size rect at the cursor (right-click). Only the four edges
- * are read, so a real `DOMRect` satisfies this structurally without adaptation.
+ * The rectangle a row menu is anchored to: either the ⋮ button's rect (click)
+ * or a zero-size rect at the cursor (right-click). Only the four edges are
+ * read, so a real `DOMRect` satisfies this structurally without adaptation.
  */
 export interface MenuAnchor {
   readonly left: number;
@@ -54,23 +25,11 @@ export interface MenuAnchor {
 }
 
 /**
- * Per-mount menu open/close state. Created fresh for each `startApp` mount via
- * {@link createMenuState} and threaded through the shared context
- * (`setMenuState` / `getMenuState` in `./context.js`), so a re-mount never
- * inherits a previous mount's open-menu references.
- *
- *  - `openRowMenu` holds the close function of whichever row menu (the "⋮"
- *    dropdown OR a right-click context menu) is currently showing, so
- *    {@link MenuState.closeAllRowMenus} can dismiss it before opening another
- *    and — crucially — so the menu's document-level click / Escape listeners
- *    are removed on close rather than leaking across renders or rapid
- *    open/close cycles.
- *  - `openCurrentDirMenu` holds the current-directory menu's open function,
- *    rebound on every render so the once-attached `contextmenu` listener
- *    always targets the current directory.
- *
- * Both are scoped per-mount (not per-row) because the "only one menu open"
- * invariant spans every row AND the directory menu within one mount.
+ * Per-mount menu open/close state. At most one row menu (the ⋮ dropdown or a
+ * right-click context menu) is open at a time within a mount. It is scoped to
+ * the mount rather than module-level so a re-mount never inherits a previous
+ * mount's open-menu references (an open menu in mount #2 could otherwise call
+ * mount #1's stale close function and hide a detached menu).
  */
 export interface MenuState {
   /** The close function of the currently-open row menu (null when none). */
@@ -81,13 +40,7 @@ export interface MenuState {
   closeAllRowMenus(): void;
 }
 
-/**
- * Create a fresh, isolated {@link MenuState} for one mount. `createMenu`,
- * `makeRowMenu`, and `makeDirMenu` read/write its fields, so the single-open
- * invariant is scoped to the mount that owns the state — never shared across
- * mounts. `render-orchestrator.init` calls this on every mount and stores the
- * result in the shared context.
- */
+/** Create a fresh, isolated {@link MenuState} for one mount. */
 export function createMenuState(): MenuState {
   const state: MenuState = {
     openRowMenu: null,
@@ -105,23 +58,12 @@ export const MENU_EDGE_MARGIN = 4;
 
 /**
  * Compute the CSS `left`/`top` for a `position: fixed` row menu so it stays on
- * screen, opening below and left-aligned with `anchor` by default and flipping
- * direction when that would run off the viewport:
+ * screen. Opens below + left-aligned with `anchor` by default and flips
+ * direction when that would overflow the viewport (down→up, left→right),
+ * then clamps to at least {@link MENU_EDGE_MARGIN} so a menu larger than the
+ * viewport rests against the top-left corner.
  *
- *  - Vertical: open DOWN (top = `anchor.bottom`); if `anchor.bottom + height`
- *    would overflow the bottom edge, flip to open UP (top = `anchor.top -
- *    height`) so the menu's bottom edge meets the anchor's top.
- *  - Horizontal: open LEFT-aligned (left = `anchor.left`); if `anchor.left +
- *    width` would overflow the right edge, flip to RIGHT-align (left =
- *    `anchor.right - width`) so the menu's right edge meets the anchor's right.
- *
- * Finally the result is clamped to at least {@link MENU_EDGE_MARGIN} so a menu
- * larger than the viewport rests against the top-left corner instead of going
- * negative.
- *
- * Pure (no DOM access) so the flip behavior can be unit-tested directly with
- * arbitrary anchor / size / viewport triples; `openMenu` measures the real
- * values and feeds them in.
+ * Pure (no DOM access) so placement is unit-testable in isolation.
  */
 export function computeMenuPosition(
   anchor: MenuAnchor,
@@ -131,16 +73,12 @@ export function computeMenuPosition(
   let left = anchor.left;
   let top = anchor.bottom;
 
-  // Overflowing the right edge → open leftward (right-align to the anchor).
   if (left + size.width > viewport.width - MENU_EDGE_MARGIN) {
     left = anchor.right - size.width;
   }
-  // Overflowing the bottom edge → open upward (bottom-align to the anchor).
   if (top + size.height > viewport.height - MENU_EDGE_MARGIN) {
     top = anchor.top - size.height;
   }
-
-  // Clamp into the viewport (also covers a menu larger than the viewport).
   if (left < MENU_EDGE_MARGIN) {
     left = MENU_EDGE_MARGIN;
   }
@@ -151,13 +89,8 @@ export function computeMenuPosition(
   return { left, top };
 }
 
-/**
- * The viewport size used by computeMenuPosition to flip/clamp menus. Falls
- * back from `document.documentElement.clientWidth/Height` (the layout
- * viewport) to `window.innerWidth/Height` — the fallback matters in test
- * DOMs (e.g. happy-dom) where the `<html>` element reports a 0×0 client
- * size.
- */
+/** Layout viewport size, falling back to `innerWidth/Height` for test DOMs
+ *  where `<html>` reports a 0×0 client size. */
 function getViewportSize(): { width: number; height: number } {
   return {
     width: document.documentElement.clientWidth || window.innerWidth,
@@ -167,23 +100,14 @@ function getViewportSize(): { width: number; height: number } {
 
 /**
  * Build a `.row-menu` dropdown from `items` with the shared open/close
- * lifecycle used by EVERY menu in the browse view (the per-row ⋮ menu, the
- * right-click row menu, and the current-directory blank-space menu). Returns
- * the menu element plus its `openMenu`/`closeMenu` controls.
+ * lifecycle. Returns the menu element plus its `openMenu`/`closeMenu` controls.
  *
- * Lifecycle:
- *  - `openMenu(anchor)` first calls `state.closeAllRowMenus()` (the per-mount
- *    single-open invariant — at most one menu shows at a time across every
- *    row and the directory menu), reveals the menu, measures it, and positions
- *    it at `anchor` via {@link computeMenuPosition} (flipping/clamping to stay
- *    on screen). It then registers one-shot document `click` (close on the
- *    next click anywhere — outside OR on a menu item, after the item's own
- *    handler has run) and `keydown` (close on Escape) listeners.
- *  - `closeMenu()` hides the menu, removes both listeners, and clears the
- *    mount's open-menu slot if it still points here.
- *
- * `btn`, when supplied (the ⋮ trigger), gets its `aria-expanded` toggled with
- * the menu; a directory menu has no trigger button, so it omits `btn`.
+ * `openMenu` enforces the single-open invariant, reveals the menu, measures
+ * it, positions it via {@link computeMenuPosition}, then registers one-shot
+ * document `click` and `keydown` listeners. `closeMenu` hides the menu,
+ * removes both listeners, and clears the mount's open-menu slot if it still
+ * points here. When `btn` (the ⋮ trigger) is supplied its `aria-expanded`
+ * toggles with the menu; a directory menu has no trigger button.
  */
 function createMenu(
   state: MenuState,
@@ -199,8 +123,6 @@ function createMenu(
   menu.hidden = true;
   menu.append(...items);
 
-  // Document listeners registered on open, removed on close. Kept as named
-  // references so removeEventListener tears down the exact functions.
   function onDocClick(): void {
     closeMenu();
   }
@@ -209,23 +131,18 @@ function createMenu(
       closeMenu();
       return;
     }
-    // WAI-ARIA Menu Button keyboard contract: ArrowDown/ArrowUp move focus
-    // between items (wrapping at the ends) and Home/End jump to the first /
-    // last item. These are handled only while the menu is open (this listener
-    // is registered by openMenu and removed by closeMenu), and they call
-    // preventDefault so the keys never also scroll the page. Any other key is
-    // ignored so typing / tabbing etc. behave normally.
+    // WAI-ARIA Menu Button contract: ArrowDown/ArrowUp move focus between
+    // items with wrapping, Home/End jump to the ends. preventDefault keeps
+    // these keys from also scrolling the page.
     const count = items.length;
     if (count === 0) return;
     const current = items.findIndex((el) => el === document.activeElement);
     let next: number;
     switch (event.key) {
       case 'ArrowDown':
-        // No item focused yet → land on the first; otherwise advance with wrap.
         next = current < 0 ? 0 : (current + 1) % count;
         break;
       case 'ArrowUp':
-        // No item focused yet → land on the last; otherwise retreat with wrap.
         next = current < 0 ? count - 1 : (current - 1 + count) % count;
         break;
       case 'Home':
@@ -271,23 +188,10 @@ function createMenu(
   return { menu, openMenu, closeMenu };
 }
 
-/* -------------------------------------------------------------------------
- * Current-directory context menu (right-click on blank space)
- *
- * Right-clicking the blank area of the results view (NOT on a row or the
- * header) opens a menu that acts on the CURRENTLY browsed directory: upload
- * into it, or create a new subdirectory. The menu for the current dir is
- * rebuilt on every render (the path changes with navigation) and lives as a
- * hidden `.row-menu` inside the results element; the per-mount `MenuState`'s
- * `openCurrentDirMenu` holds the latest menu's open function, read by the
- * once-attached `contextmenu` listener so it always targets the current
- * directory.
- * ---------------------------------------------------------------------- */
-
 /**
- * Build the current-directory menu for `dirPath`: Upload (into `dirPath`) then
- * New directory (a new subdirectory under `dirPath`). Has no trigger button —
- * it is opened only by the results-view `contextmenu` listener.
+ * Build the current-directory menu for `dirPath`: Upload into `dirPath`, then
+ * New directory (a subdirectory under `dirPath`). No trigger button — opened
+ * only by the results-view `contextmenu` listener.
  */
 function makeDirMenu(
   dirPath: string,
@@ -302,9 +206,8 @@ function makeDirMenu(
       'New directory',
       async () => {
         const name = window.prompt('New directory name:', '');
-        // Empty / whitespace-only names (and a cancelled prompt) do nothing.
-        // joinPath normalizes the combined path, and the service's SafeResolve
-        // sandboxes it again, so a traversal-laden name cannot escape root.
+        // Empty/whitespace names and a cancelled prompt do nothing. joinPath
+        // normalizes the combined path and the service sandboxes it again.
         if (name === null || name.trim() === '') {
           return;
         }
@@ -319,17 +222,14 @@ function makeDirMenu(
 
 /**
  * Mount the current-directory menu for `dirPath` into `resultsEl` and wire the
- * blank-space `contextmenu` listener. Called from `renderBrowse` on every
- * render: the menu is rebuilt + re-appended each time (cleared by the render's
- * `innerHTML = ''`), while the listener attaches exactly once per results
- * element (guarded by a data attribute, since the results element persists
- * across renders within a mount).
+ * blank-space `contextmenu` listener. The menu is rebuilt + re-appended each
+ * render (cleared by the render's `innerHTML = ''`); the listener attaches
+ * exactly once per results element (guarded by a data attribute, since the
+ * results element persists across renders within a mount).
  *
- * The listener opens the current-dir menu ONLY for genuine blank space: a
- * right-click whose target is inside the `table` (any header or data row —
- * folder/file rows handle themselves via their own listeners, and the ".."
- * parent row is navigation-only) or inside an already-open `.row-menu` is
- * ignored, so those keep their existing behavior.
+ * The listener opens the menu only for genuine blank space — a right-click
+ * inside the `table` (any header/data row) or an open `.row-menu` is ignored
+ * so those keep their existing behavior.
  */
 export function setupDirContextMenu(
   resultsEl: HTMLElement,
@@ -364,31 +264,10 @@ export function setupDirContextMenu(
 
 /**
  * Build the per-row "⋮" action menu for a browse data row: a `.row-menu-btn`
- * (the three-dots trigger) and its `.row-menu` dropdown of action items
- * (Download for files only, then Delete / Move / Copy). Returns both elements
- * plus the row-local `openMenu(x, y)` so `makeBrowseRow` can also open the
- * SAME menu on a right-click anywhere on the row.
- *
- * Open / close lifecycle:
- *  - The button toggles: when closed, `stopPropagation()` on the opening
- *    click (so it never reaches the just-registered document listener) then
- *    `openMenu` below the button via `getBoundingClientRect()`; when open, a
- *    second click closes it.
- *  - `openMenu` first calls `closeAllRowMenus()` (only one open at a time),
- *    positions the `position: fixed` menu at viewport `(x, y)` px, reveals it,
- *    flips `aria-expanded` to `'true'`, registers one-shot document `click`
- *    (close on the next click anywhere — outside OR on a menu item, after the
- *    item's own handler has run) and `keydown` (close on Escape) listeners,
- *    and records itself as the open menu.
- *  - `closeMenu` hides the menu, restores `aria-expanded` to `'false'`, removes
- *    both document listeners, and clears the mount's open-menu slot if it
- *    still points here.
- *
- * The action-item handler bodies use the same `window.confirm` / `prompt`,
- * `getApi().delete/move/copy`, `normalizeRelativePath`, and `rerender()`
- * calls as the previous inline-button handlers, so all behavior is
- * preserved. The items keep `class="btn"` (the `.row-menu .btn` CSS restyles
- * them into menu items) so existing query/characterization assertions hold.
+ * trigger and its `.row-menu` dropdown (Download for files only, then
+ * Delete / Move / Copy; folders get Upload first). Returns both elements plus
+ * the row-local `openMenu` so the same menu can be opened on a right-click
+ * anywhere on the row.
  */
 export function makeRowMenu(
   entry: FileEntry,
@@ -406,10 +285,6 @@ export function makeRowMenu(
   btn.setAttribute('aria-expanded', 'false');
   btn.textContent = '⋮';
 
-  // Menu items. Folders get an Upload-into-this-folder action first; files
-  // get a Download anchor first. Both then get Delete / Move / Copy. Each
-  // item carries a leading Bootstrap Icons glyph (see makeIcon) so the action
-  // is recognizable at a glance; the label text follows.
   const items: HTMLElement[] = [];
   if (entry.isDirectory) {
     items.push(makeActionButton('Upload', () => pickAndUploadInto(entry.path), 'upload'));
@@ -463,13 +338,8 @@ export function makeRowMenu(
     ),
   );
 
-  // Shared open/close + positioning lifecycle (see createMenu). The ⋮ button
-  // is passed so its aria-expanded toggles with the menu.
   const { menu, openMenu, closeMenu } = createMenu(state, items, btn);
 
-  // Toggle: open below the button, or close if already open. stopPropagation on
-  // the OPENING click is critical — without it the click would bubble to the
-  // document listener registered by openMenu and close the menu immediately.
   btn.addEventListener('click', (event) => {
     if (menu.hidden) {
       event.stopPropagation();

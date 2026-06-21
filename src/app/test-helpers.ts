@@ -1,20 +1,11 @@
 /**
- * Shared test helpers for the `src/app/*.test.ts` per-domain test files.
+ * Shared helpers for the `src/app/*.test.ts` files: fixture builders
+ * (`fileEntry`, `browseResult`, `joinPathHelper`), timing (`flush`), DOM
+ * scaffolding (`setup`, `setupCleared`, `SetupCtx`), table/row traversal, and
+ * the shared per-test fetch stub lifecycle (`installAppTestLifecycle`).
  *
- * Houses shared utilities for the `src/app/*.test.ts` per-domain test files:
- *
- *   - fixture builders: `fileEntry`, `browseResult`, `joinPathHelper`
- *   - timing: `flush`
- *   - DOM scaffolding: `setup`, `setupCleared`, `SetupCtx`
- *   - table/row traversal: `dataRows`, `rowByName`, `cellsOf`,
- *     `clickNameLink`, `buttonsByText`
- *   - the shared per-test fetch stub lifecycle: `installAppTestLifecycle` plus
- *     the `fetchMock` live binding it rebinds each test
- *
- * Test-only utility: deliberately kept out of the production `tsc` build via
- * the `src/app/test-helpers.ts` entry in `tsconfig.json`'s `exclude` array
- * (mirroring the `src/test-utils/**` glob pattern), so it is never
- * shipped to `wwwroot/dist`. Only test files import it.
+ * Test-only: excluded from the production build via `tsconfig.json`'s
+ * `exclude`, so it never ships to `wwwroot/dist`.
  */
 import { vi, beforeEach, afterEach } from 'vitest';
 import { startApp } from '../app';
@@ -50,7 +41,7 @@ export function browseResult(opts: Partial<BrowseResult> = {}): BrowseResult {
   };
 }
 
-// local join to avoid pulling joinPath into the test's asserted import set
+// local join to avoid pulling joinPath into a test's asserted import set
 export function joinPathHelper(base: string, name: string): string {
   return (base ? base + '/' : '') + name;
 }
@@ -84,9 +75,8 @@ export interface SetupCtx {
 
 /**
  * Build a fresh app inside a fresh container. Clears `document.body` first so
- * every test is independent (no leakage of elements, and document-scoped
- * queries inside `renderBrowse`/`renderSearch` always resolve to the current
- * test's DOM).
+ * every test is independent and document-scoped queries resolve to the
+ * current test's DOM.
  */
 export function setup(options: { hash?: string } = {}): SetupCtx {
   document.body.innerHTML = '';
@@ -114,8 +104,8 @@ export function setup(options: { hash?: string } = {}): SetupCtx {
 }
 
 /**
- * `setup()` plus a flush (so startApp's initial `render()` settles) and a clear
- * of `.results`, mimicking what `render()` does before delegating to
+ * `setup()` plus a flush (so startApp's initial `render()` settles) and a
+ * clear of `.results`, mimicking what `render()` does before delegating to
  * `renderBrowse`/`renderSearch`. Used by tests that exercise those helpers
  * directly so their assertions are isolated from the initial render's output.
  */
@@ -155,9 +145,8 @@ export function buttonsByText(container: Element, text: string): HTMLButtonEleme
  *
  * `fetchMock` is an `export let` live binding: `installAppTestLifecycle()`'s
  * `beforeEach` rebinds it to a fresh permissive `vi.fn` each test, and every
- * importer sees the rebound value (ESM live bindings — verified against this
- * vitest setup). Tests therefore read `fetchMock.mock.calls` directly, without
- * a per-file `let fetchMock` declaration.
+ * importer sees the rebound value. Tests therefore read `fetchMock.mock.calls`
+ * directly, without a per-file declaration.
  * ========================================================================= */
 
 export let fetchMock: ReturnType<typeof vi.fn> = vi.fn(async () => mockResponse({ body: {} }));
@@ -169,12 +158,12 @@ export let fetchMock: ReturnType<typeof vi.fn> = vi.fn(async () => mockResponse(
  */
 export function installAppTestLifecycle(): void {
   beforeEach(() => {
-    // A permissive default: every browse/search GET returns a recognizable
-    // result derived from the requested path/query, and every mutation returns
-    // 200. Individual tests override with `fetchMock.mockImplementation(...)`
-    // or `.mockResolvedValueOnce(...)` for specific scenarios. This also means
-    // incidental background renders (e.g. from accumulated hashchange
-    // listeners) never throw unhandled rejections.
+    // A permissive default: browse/search GETs return a recognizable result
+    // derived from the requested path/query, and mutations return 200.
+    // Individual tests override with `fetchMock.mockImplementation(...)` or
+    // `.mockResolvedValueOnce(...)`. This also keeps incidental background
+    // renders (e.g. from accumulated hashchange listeners) from throwing
+    // unhandled rejections.
     fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const u = String(url);
       const method = (init?.method ?? 'GET').toUpperCase();
@@ -213,15 +202,12 @@ export function installAppTestLifecycle(): void {
   });
 
   afterEach(() => {
-    // NOTE: do NOT touch window.location.hash here. In happy-dom, assigning to
-    // location.hash dispatches `hashchange` synchronously. startApp unsubscribes
-    // the previous mount's render() listener on re-mount (so listeners no longer
-    // accumulate across tests), but the CURRENT test's listener remains active
-    // until the next test's setup() re-mounts. Resetting the hash after
-    // `vi.unstubAllGlobals()` would therefore drive a render through the REAL
-    // fetch. We clear the body first (while fetch is still stubbed, so any
-    // in-flight render's already-issued request stays mocked) and reset the hash
-    // at the start of the next test's setup() instead.
+    // NOTE: do NOT touch window.location.hash here. In happy-dom, assigning
+    // to location.hash dispatches `hashchange` synchronously. The current
+    // test's render() listener remains active until the next test's setup()
+    // re-mounts, so resetting the hash after `vi.unstubAllGlobals()` would
+    // drive a render through the REAL fetch. Clear the body first (while fetch
+    // is still stubbed) and reset the hash in the next test's setup() instead.
     document.body.innerHTML = '';
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

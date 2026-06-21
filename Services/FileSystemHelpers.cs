@@ -11,10 +11,10 @@ namespace TestProject.Services;
 internal static class FileSystemHelpers
 {
     /// <summary>
-    /// Determines whether the given file-system entry is a reparse point (a
-    /// symbolic link on Linux/macOS, a symbolic link or directory junction on
-    /// Windows). The attributes of the entry itself are inspected — not those
-    /// of its target — so the link is never followed.
+    /// Determines whether the entry is a reparse point (a symbolic link on
+    /// Linux/macOS, a symlink or directory junction on Windows). The entry's
+    /// own attributes are inspected — not the target's — so the link is never
+    /// followed.
     /// </summary>
     public static bool IsReparsePoint(FileSystemInfo info)
         => (info.Attributes & FileAttributes.ReparsePoint) != 0;
@@ -22,15 +22,12 @@ internal static class FileSystemHelpers
     /// <summary>
     /// Counts the immediate children (files + subdirectories) of a directory,
     /// used to populate a directory entry's
-    /// <see cref="FileEntryDto.ItemCount"/> for display in the Size column.
-    /// Only direct children are counted — nested contents below a subdirectory
-    /// are NOT included. Returns 0 for an empty or inaccessible directory, and
-    /// for a reparse point (symbolic link / junction): following such a link
-    /// would enumerate content outside the home sandbox, so it is reported as
-    /// having no visible children rather than descending into its (possibly
-    /// external) target. Enumeration errors (access denied, directory removed
-    /// between the listing and the count) are swallowed and reported as 0 so
-    /// one unreadable folder cannot abort a browse/search response.
+    /// <see cref="FileEntryDto.ItemCount"/> for the Size column. Nested
+    /// contents below a subdirectory are not included. Returns 0 for an empty
+    /// or inaccessible directory, and for a reparse point (following such a
+    /// link would enumerate content outside the home sandbox). Enumeration
+    /// errors (access denied, directory removed mid-count) are swallowed and
+    /// reported as 0 so one unreadable folder cannot abort a response.
     /// </summary>
     public static int CountImmediateItems(DirectoryInfo directoryInfo)
     {
@@ -59,11 +56,10 @@ internal static class FileSystemHelpers
     }
 
     /// <summary>
-    /// Builds a <see cref="FileEntryDto"/> from a file-system entry, using
-    /// <paramref name="root"/> to convert its absolute path to a normalized
-    /// forward-slash relative path. Directory entries carry the count of their
-    /// immediate children (via <see cref="CountImmediateItems"/>); file entries
-    /// report their length and an item count of zero.
+    /// Builds a <see cref="FileEntryDto"/> from a file-system entry, converting
+    /// its absolute path to a normalized forward-slash relative path via
+    /// <paramref name="root"/>. Directory entries carry their immediate-child
+    /// count; file entries report their length.
     /// </summary>
     public static FileEntryDto BuildEntry(FileSystemInfo info, HomeRoot root)
     {

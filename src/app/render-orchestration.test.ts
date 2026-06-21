@@ -10,7 +10,9 @@
  * Environment: the project-default `happy-dom` (these tests need a DOM).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { startApp, renderBrowse, renderSearch } from '../app';
+import { startApp } from '../app';
+import { renderBrowse } from './render-browse';
+import { renderSearch } from './render-search';
 import type { SearchResult } from '../api';
 import { toBrowseHash, toSearchHash, navigate } from '../router';
 import { mockResponse } from '../test-utils/mock-response';

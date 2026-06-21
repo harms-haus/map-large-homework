@@ -11,7 +11,6 @@ body {
   background: #1e1e1e;
 }
 
-/* Subtle accent link – used sparingly */
 a {
   color: #6aa6ff;
   text-decoration: none;
@@ -20,9 +19,7 @@ a:hover {
   text-decoration: underline;
 }
 
-/* ── Page layout ──
-   The app fills the viewport as a column so the embedded host (and therefore
-   the scrollable results) gets a definite height in both views. */
+/* Page layout */
 html,
 body {
   height: 100%;
@@ -36,25 +33,19 @@ body {
   box-sizing: border-box;
 }
 
-/* ── File-browser widget + hosts ──
-   The widget is CHROMELESS: no border, background, or title of its own. It is
-   a flex column that fills whichever host renders it (the embedded host or the
-   dialog body), keeping the results area scrollable in both contexts. */
+/* File-browser widget + hosts */
 .file-browser {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-/* Embedded host: the primary, chromeless surface while the dialog is closed. */
 .file-browser-host {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-/* Dialog body slot: the widget is moved here on open. Flexes to fill the
-   dialog's remaining height below the titlebar. */
 .browser-dialog .dialog-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -62,7 +53,7 @@ body {
   flex-direction: column;
 }
 
-/* ── Trigger button (toggle file browser) ── */
+/* Trigger button (toggle file browser) */
 .trigger {
   padding: 8px 16px;
   cursor: pointer;
@@ -76,13 +67,7 @@ body {
   background: #45494d;
 }
 
-/* ── Native <dialog> styling ── */
-/* Base chrome only (background/border/size/padding). Crucially we do NOT set
-   `display` here: a closed <dialog> is hidden by the UA rule
-   `dialog:not([open]) { display: none }`, but any author `display` declaration
-   overrides the UA sheet entirely and would keep the closed dialog (and thus
-   its frame/titlebar) visible on the page. The flex column layout is applied
-   ONLY to the open dialog below. */
+/* <dialog> styling */
 .browser-dialog {
   background: #252526;
   color: #e6e6e6;
@@ -98,8 +83,6 @@ body {
   margin: auto;
   box-sizing: border-box;
 }
-/* Flex column layout only while open, so the closed dialog stays
-   `display: none` (hidden) and renders its frame only when shown. */
 .browser-dialog[open] {
   display: flex;
   flex-direction: column;
@@ -108,7 +91,7 @@ body {
   background: rgba(0, 0, 0, 0.6);
 }
 
-/* ── Header row ── */
+/* Header row */
 .dialog-header {
   position: relative;
   display: flex;
@@ -116,9 +99,6 @@ body {
   align-items: center;
   margin-bottom: 12px;
 }
-/* Title is absolutely centered across the full dialog width so the close
-   button's width never offsets it. pointer-events:none keeps the centered
-   text from intercepting clicks meant for the button. */
 .dialog-header .title {
   position: absolute;
   left: 0;
@@ -146,7 +126,7 @@ body {
   background: #2d2d30;
 }
 
-/* ── Toolbar ── */
+/* Toolbar */
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -193,26 +173,17 @@ body {
   border-color: #6aa6ff;
 }
 
-/* ── Search wrapper, in-input icons, visibility toggling ──
-   The search input is wrapped in .search-wrapper so a search glyph and a
-   clear button can be overlaid inside the right edge of the input. The
-   wrapper becomes the toolbar's right-aligned flex child (margin-left: auto),
-   replacing the margin-left:auto that was on the bare input. */
+/* Search wrapper, in-input icons, visibility toggling */
 .search-wrapper {
   position: relative;
   display: inline-flex;
   align-items: center;
   margin-left: auto;
 }
-/* Override the inherited .toolbar input margin-left:auto (the wrapper handles
-   positioning now) and reserve space so typed text never slides under the
-   absolutely-positioned icon. */
 .search-wrapper input[type='text'] {
   margin-left: 0;
   padding-right: 28px;
 }
-/* Both overlays sit inside the input's right edge. The search icon is
-   decorative (no clicks); the clear button must stay clickable. */
 .search-wrapper .search-icon,
 .search-wrapper .clear-btn {
   position: absolute;
@@ -234,13 +205,9 @@ body {
 .search-wrapper .clear-btn:hover {
   color: #e6e6e6;
 }
-/* Visibility toggling via :placeholder-shown (no JS). The icon and button are
-   siblings AFTER the input, so the general sibling combinator ~ applies.
-   Empty input (placeholder shown): search icon visible, clear button hidden. */
 .search-wrapper .clear-btn {
   display: none;
 }
-/* Input has text (placeholder NOT shown): swap — hide search icon, show clear. */
 .search-wrapper input:not(:placeholder-shown) ~ .search-icon {
   display: none;
 }
@@ -248,21 +215,7 @@ body {
   display: inline-flex;
 }
 
-/* ── Results container (scrollable) ──
-   Grows to fill its host's remaining height (flex: 1) and scrolls when the
-   table body overflows. `min-height: 0` lets the flex item shrink below its
-   content so the scrollbar engages. The table header is made sticky below, so
-   only the body rows scroll.
-
-   `padding-bottom: var(--browse-row-height)` reserves one row-height of blank
-   space at the bottom of the scroll region. This guarantees there is ALWAYS a
-   clickable blank area below the last row — even when the table is full and
-   scrolled — so a right-click there can open the current-directory context
-   menu (see setupDirContextMenu in dom-builders.ts). A `<tr>` margin cannot
-   do this: table rows ignore `margin` entirely under `border-collapse`, so
-   the space is provided as container padding instead. The blank area is the
-   `.results` element itself (not within the `table`), which is exactly what
-   the contextmenu listener keys on to distinguish blank space from rows. */
+/* Results container (scrollable) */
 .results {
   flex: 1;
   min-height: 0;
@@ -335,10 +288,7 @@ body {
   align-items: center;
 }
 
-/* ── Browse-table column alignment ──
-   Scoped to .browse-table so the search table (Name|Path|Size|Modified) is
-   not affected.  Column 1 (Name) stretches to fill remaining width; columns
-   2‑4 (Size, Modified, Actions) are right-aligned. */
+/* Browse-table column alignment */
 .browse-table th:nth-child(1),
 .browse-table td:nth-child(1) {
   width: 100%;
@@ -352,20 +302,13 @@ body {
   text-align: right;
 }
 
-/* ── Click-to-browse rows ──
-   Folder and parent ("..") rows navigate on a whole-row click (see
-   navigateRowOnClick in dom-builders.ts), so they show a pointer cursor to
-   signal that. File rows keep the default cursor: they have no left-click
-   action, only a right-click context menu. */
+/* Click-to-browse rows */
 .browse-table tbody tr.folder-row,
 .browse-table tbody tr.parent-row {
   cursor: pointer;
 }
 
-/* ── Three-dots row menu button ──
-   Hidden until the row is hovered or the button's own popup menu is open.
-   Uses the same muted-foreground / brighten-on-hover pattern as the dialog
-   close button. */
+/* Three-dots row menu button */
 .row-menu-btn {
   background: none;
   border: none;
@@ -378,10 +321,6 @@ body {
   opacity: 0;
   pointer-events: none;
 }
-/* Keep the attribute selector in double quotes: that is how a browser
-   serializes an `aria-expanded` attribute set via setAttribute, and the
-   reveal-rule contract in app.css.test.ts anchors on that exact text.
-   prettier-ignore so the repo's singleQuote config doesn't rewrite it. */
 /* prettier-ignore */
 .browse-table tbody tr:hover .row-menu-btn,
 .row-menu-btn[aria-expanded="true"] {
@@ -392,13 +331,7 @@ body {
   color: #e6e6e6;
 }
 
-/* ── Dropdown context menu ──
-   position: fixed so it is placed at viewport coordinates and is never
-   clipped by the .results { overflow:auto } scroll container or covered by
-   the sticky th (z-index:1).  A hidden-menu override is REQUIRED because the
-   UA display:none rule for [hidden] gets overridden by the author
-   display:flex rule below — same class of bug as .browser-dialog (see
-   comment above). */
+/* Dropdown context menu */
 .row-menu {
   position: fixed;
   z-index: 20;
@@ -415,28 +348,7 @@ body {
   display: none;
 }
 
-/* ── Menu items ──
-   Flatten the generic .btn styling inside the dropdown.  The elements
-   themselves keep class="btn" so query-* / dataset tests that assert
-   className work unchanged.
-
-   `box-sizing: border-box` is REQUIRED here: the generic `.btn` rule does not
-   set it, and unlike <button> (whose UA default is border-box) an <a> keeps
-   the initial content-box.  With `width: 100%` + horizontal padding that made
-   the Download anchor render ~20px wider than the menu and spill out of it.
-   border-box makes width:100% include the padding so every item — anchor or
-   button — lines up exactly with the menu's content box.
-
-   `gap: 8px` spaces each item's leading Bootstrap Icons glyph from its label
-   (the .btn is display:inline-flex, so the icon <i> and the label text node
-   are flex items between which the gap applies).
-
-   `text-decoration: none` overrides the global `a:hover { text-decoration:
-   underline }` rule: the Download item is the only <a> in the menu (Delete /
-   Move / Copy are <button>s, which are unaffected), so without this it alone
-   gained a stray underline on hover. `.row-menu .btn` (specificity 0,2,0)
-   dominates `a:hover` (0,1,1), so a single declaration here covers both the
-   normal and hover states. */
+/* Menu items */
 .row-menu .btn {
   background: none;
   border: none;
@@ -454,10 +366,7 @@ body {
   background: #3a3d41;
 }
 
-/* ── Spinner animation ──
-   Applied to a Bootstrap Icons glyph (e.g. bi-arrow-repeat) to indicate a
-   loading state. `.spinning` rotates the icon; `.search-spinner` centers it
-   in the results area while a search is in flight. */
+/* Spinner animation */
 @keyframes spin {
   to {
     transform: rotate(360deg);

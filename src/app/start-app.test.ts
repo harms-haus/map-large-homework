@@ -1,7 +1,7 @@
 /**
  * Tests for `src/app.ts`'s module surface and `startApp` bootstrap: the
- * imperative DOM scaffold it builds, the dialog open/close + shared-widget
- * move wiring, and the two characterization suites that pin app.ts's retained
+ * imperative DOM scaffold it builds, the dialog open/close + create-on-open
+ * widget lifecycle, and the two characterization suites that pin app.ts's retained
  * imports and its (dead-)CSS-selector-relevant DOM output.
  *
  * Shared fixtures, DOM scaffolding, and the per-test fetch stub come from
@@ -15,7 +15,9 @@
  *  - Importing `./app` must not side-effect when there is no `#app` element.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { startApp, renderBrowse, renderSearch } from '../app';
+import { startApp } from '../app';
+import { renderBrowse } from './render-browse';
+import { renderSearch } from './render-search';
 import { toBrowseHash, toSearchHash } from '../router';
 import {
   setup,
@@ -26,6 +28,7 @@ import {
   rowByName,
   clickNameLink,
   dataRows,
+  flush,
   installAppTestLifecycle,
 } from './test-helpers';
 
@@ -158,51 +161,87 @@ describe('startApp', () => {
     });
   });
 
-  /* The file browser is a single chromeless widget shared between the embedded
-     host (primary view) and the dialog body. Opening the dialog MOVES the same
-     nodes into the dialog; closing moves them back — so there is never a second
-     copy, and the embedded view stays chromeless (no frame/title). */
-  describe('shared widget (embedded host vs dialog)', () => {
-    it('renders an embedded host and a single chromeless .file-browser widget', () => {
+  /* The embedded host holds a permanent widget. While the dialog is open a
+     second, separate widget lives in the dialog body. */
+  describe('widget lifecycle (embedded host vs dialog)', () => {
+    it('renders an embedded host and a single chromeless .file-browser widget while closed', () => {
       const { embeddedHost, widget } = setup();
       expect(embeddedHost).toBeTruthy();
       expect(embeddedHost.className).toBe('file-browser-host');
       expect(widget).toBeTruthy();
       expect(widget.className).toBe('file-browser');
-      // There is exactly one widget in the whole document.
       expect(document.querySelectorAll('.file-browser')).toHaveLength(1);
+      expect(embeddedHost.contains(widget)).toBe(true);
     });
 
-    it('hosts the widget in the embedded host while the dialog is closed', () => {
-      const { embeddedHost, widget, dialog } = setup();
+    it('the embedded widget stays in its host when the dialog opens', () => {
+      const { embeddedHost, widget, dialog, trigger } = setup();
       expect(embeddedHost.contains(widget)).toBe(true);
-      // The widget (and thus its table/search/status) is NOT inside the dialog
-      // until the dialog is opened.
+      expect(dialog.contains(widget)).toBe(false);
+
+      trigger.click();
+
+      expect(embeddedHost.contains(widget)).toBe(true);
       expect(dialog.contains(widget)).toBe(false);
     });
 
-    it('moves the widget into the dialog body when the dialog opens', () => {
+    it('opening the dialog creates a separate .file-browser inside the dialog', () => {
       const { embeddedHost, widget, dialog, trigger } = setup();
 
       trigger.click();
 
       expect(dialog.open).toBe(true);
-      expect(dialog.contains(widget)).toBe(true);
-      // Same node reference, not a clone — only one widget exists.
-      expect(document.querySelectorAll('.file-browser')).toHaveLength(1);
-      expect(embeddedHost.contains(widget)).toBe(false);
+      const dialogWidget = dialog.querySelector('.file-browser');
+      expect(dialogWidget).toBeTruthy();
+      expect(dialogWidget).not.toBe(widget);
+      expect(document.querySelectorAll('.file-browser')).toHaveLength(2);
+      expect(embeddedHost.contains(widget)).toBe(true);
+      expect(dialog.contains(dialogWidget)).toBe(true);
     });
 
-    it('moves the widget back to the embedded host when the dialog closes', () => {
+    it('builds a fresh widget on every open', () => {
+      const { dialog, trigger } = setup();
+
+      trigger.click();
+      const first = dialog.querySelector('.file-browser');
+      expect(first).toBeTruthy();
+
+      dialog.close();
+      expect(dialog.querySelector('.file-browser')).toBeNull();
+      expect(document.querySelectorAll('.file-browser')).toHaveLength(1);
+
+      trigger.click();
+      const second = dialog.querySelector('.file-browser');
+      expect(second).toBeTruthy();
+      expect(second).not.toBe(first);
+      expect(document.querySelectorAll('.file-browser')).toHaveLength(2);
+    });
+
+    it('closing discards the dialog widget and leaves the embedded widget in place', () => {
       const { embeddedHost, widget, dialog, trigger } = setup();
       trigger.click();
-      expect(dialog.contains(widget)).toBe(true);
+      expect(document.querySelectorAll('.file-browser')).toHaveLength(2);
 
       dialog.close();
 
       expect(dialog.open).toBe(false);
+      expect(dialog.querySelector('.file-browser')).toBeNull();
+      expect(document.querySelectorAll('.file-browser')).toHaveLength(1);
       expect(embeddedHost.contains(widget)).toBe(true);
-      expect(dialog.contains(widget)).toBe(false);
+    });
+
+    it('the dialog widget is functional — it renders the current route into its own results', async () => {
+      const ctx = setup();
+      await flush(); // let the initial (embedded) render settle
+      const embeddedTable = ctx.results.querySelector('table.browse-table');
+      expect(embeddedTable).toBeTruthy();
+
+      ctx.trigger.click();
+      await flush(); // let the dialog widget's render settle
+
+      const dialogWidget = ctx.dialog.querySelector('.file-browser');
+      expect(dialogWidget?.querySelector('table.browse-table')).toBeTruthy();
+      expect(ctx.results.querySelector('table.browse-table')).toBe(embeddedTable);
     });
 
     it('the embedded widget carries no dialog chrome (no title/close-btn)', () => {

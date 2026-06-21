@@ -2,15 +2,15 @@
  * Route dispatcher and rendering-lifecycle owner.
  *
  * `render` reads the current route, fetches the matching result from the API,
- * and delegates to `renderBrowse` / `renderSearch`. It guards against render
- * races (a slower, superseded fetch cannot clobber fresher results) via a
- * monotonic token checked after each `await`.
+ * and delegates to `renderBrowse` / `renderSearch`. A monotonic token checked
+ * after each `await` guards against render races: a slower, superseded fetch
+ * cannot clobber fresher results.
  *
- * `init` is called once per `startApp` mount: it binds the freshly-built DOM
- * refs into the shared context, registers `render` as the re-render hook (so
- * action buttons and uploads can trigger it without a circular import), tears
- * down any previous mount's hashchange listener, subscribes a new one, and
- * kicks off the initial render.
+ * `init` is called once per `startApp` mount: it binds the DOM refs into the
+ * shared context, registers `render` as the re-render hook (so action buttons
+ * and uploads can trigger it without a circular import), tears down the
+ * previous mount's hashchange listener, subscribes a new one, and kicks off
+ * the initial render.
  */
 import { getCurrentRoute, subscribe } from '../router.js';
 import { normalizeRelativePath } from '../format.js';
@@ -26,39 +26,21 @@ import { createMenuState } from './menus.js';
 import { renderBrowse } from './render-browse.js';
 import { renderSearch } from './render-search.js';
 
-/** Threshold (ms) below which a search spinner is not shown.
- *  Fast searches that complete within this window avoid flashing a loading
- *  indicator; only searches that take longer display the spinner. */
+/** Threshold (ms) below which a search spinner is not shown. */
 const SPINNER_DELAY_MS = 500;
 
-/* -------------------------------------------------------------------------
- * Rendering-lifecycle state
- *
- * `unsubscribe` holds the teardown for the CURRENT mount's hashchange listener.
- * `init` clears any previous listener before subscribing a new one, so a
- * re-mount never leaves the old listener on `window` (memory leak fix).
- *
- * `renderToken` is a monotonic counter incremented at the start of every
- * `render()`. Each in-flight render captures its token and, after each `await`,
- * bails out if a newer render has started — preventing a slower, superseded
- * fetch from clobbering the freshest results (render-race fix).
- * ---------------------------------------------------------------------- */
+// `unsubscribe` tears down the current mount's hashchange listener so a
+// re-mount never leaves the old listener on `window`.
+// `renderToken` is incremented at the start of every `render()`; each in-flight
+// render captures its token and bails out after each `await` if a newer render
+// has started.
 let unsubscribe: (() => void) | null = null;
 let renderToken = 0;
 
-/**
- * Bind the freshly-built DOM refs into the shared context, create a fresh
- * per-mount {@link MenuState} (so row/directory menu state never leaks across
- * mounts), register `render` as the re-render hook, tear down any previous
- * mount's hashchange listener, subscribe a new one, and kick off the initial
- * render.
- */
 export function init(refs: DomRefs): void {
   setRefs(refs);
   setMenuState(createMenuState());
   setRenderHook(render);
-  // Tear down the previous mount's listener first (if any) so re-mounts never
-  // accumulate hashchange listeners on `window`.
   if (unsubscribe !== null) {
     unsubscribe();
     unsubscribe = null;
@@ -68,33 +50,25 @@ export function init(refs: DomRefs): void {
 }
 
 /**
- * Route dispatcher.
- *
- * Clears the results container synchronously (so a pending/failed fetch never
- * leaves a stale table behind) but does NOT clear the breadcrumb or status
- * here. Clearing those synchronously would remove in-page navigation targets
- * in the middle of a click handler: `navigate()` dispatches `hashchange`
+ * Route dispatcher. Clears the results container synchronously so a
+ * pending/failed fetch leaves no stale table, but does NOT clear the
+ * breadcrumb or status here: clearing those synchronously would remove
+ * in-page navigation targets mid-click — `navigate()` dispatches `hashchange`
  * synchronously in happy-dom, which would re-enter `render` and wipe the
- * breadcrumb before the click's caller can read the next segment. The
- * breadcrumb/status are instead refreshed by `renderBrowse`/`renderSearch`
- * once data arrives.
+ * breadcrumb before the click's caller can read the next segment. They are
+ * refreshed by `renderBrowse`/`renderSearch` once data arrives.
  */
 export async function render(): Promise<void> {
-  // Claim this render slot. A newer render increments `renderToken` past
-  // `myToken`; after each `await` we bail out if superseded so a slower fetch
-  // can never overwrite the freshest results, breadcrumb, or status.
+  // Claim this render slot. After each `await` we bail out if superseded so a
+  // slower fetch can never overwrite the freshest results.
   const myToken = ++renderToken;
   const route = getCurrentRoute();
   const resultsEl = getResults();
   resultsEl.innerHTML = '';
-  // Debounced spinner: a search fetch only shows a spinner if it is still in
-  // flight after 500ms, so fast searches never flash a loading indicator. The
-  // timer is cleared on every exit path (success, error, superseded), and its
-  // callback also bails if a newer render has claimed the slot — so a slower,
-  // superseded fetch can never re-add a stale spinner. For browse routes, no
-  // spinner is ever shown. When results do render, the spinner (if shown) is
-  // removed naturally: `renderSearch(result)` clears the container before
-  // building the table, and the error handler's `textContent` replaces all.
+
+  // A search fetch shows a spinner only if still in flight after 500ms, so
+  // fast searches never flash a loading indicator. The timer is cleared on
+  // every exit path, and its callback also bails if superseded.
   let spinnerTimer: ReturnType<typeof setTimeout> | null = null;
   const clearSpinnerTimer = (): void => {
     if (spinnerTimer !== null) {
@@ -105,7 +79,6 @@ export async function render(): Promise<void> {
   if (route.view === 'search') {
     spinnerTimer = setTimeout(() => {
       spinnerTimer = null;
-      // A newer render owns the slot — don't re-add a stale spinner.
       if (myToken !== renderToken) return;
       const spinnerWrap = document.createElement('div');
       spinnerWrap.className = 'search-spinner';
@@ -129,10 +102,9 @@ export async function render(): Promise<void> {
     }
   } catch (err) {
     clearSpinnerTimer();
-    // A superseded render must not even commit its error.
     if (myToken !== renderToken) return;
+    const message = err instanceof Error ? err.message : String(err);
     // textContent replaces all children, so any stale table is removed too.
-    resultsEl.textContent =
-      err instanceof Error ? 'Error: ' + err.message : 'Error: ' + String(err);
+    resultsEl.textContent = 'Error: ' + message;
   }
 }

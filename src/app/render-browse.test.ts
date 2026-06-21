@@ -21,7 +21,7 @@
  *    first.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderBrowse } from '../app';
+import { renderBrowse } from './render-browse';
 import { toBrowseHash } from '../router';
 import { formatBytes, normalizeRelativePath } from '../format';
 import { mockResponse } from '../test-utils/mock-response';
