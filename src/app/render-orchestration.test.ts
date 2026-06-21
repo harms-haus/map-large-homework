@@ -4,8 +4,7 @@
  * previous results), the render-race guard and hashchange-listener cleanup, and
  * the route-independence characterization of `renderBrowse`/`renderSearch`.
  *
- * Split out of the former `src/app.test.ts` monolith (task-29). Shared
- * fixtures, DOM scaffolding, and the per-test fetch stub come from
+ * Shared fixtures, DOM scaffolding, and the per-test fetch stub come from
  * `./test-helpers`.
  *
  * Environment: the project-default `happy-dom` (these tests need a DOM).
@@ -30,19 +29,16 @@ import {
 installAppTestLifecycle();
 
 /* ===========================================================================
- * render output depends ONLY on `result` (route-parameter removal)
+ * render output depends ONLY on `result` (route is irrelevant)
  *
- * Characterization for the removal of the unused `route` parameter from
- * `renderBrowse`/`renderSearch`. Before the refactor each function accepted a
- * `route: Route` that it discarded (`void route`); after the refactor the
- * parameter is gone. The observable contract is unchanged either way:
- * EVERYTHING the functions render — breadcrumb, status footer, and the results
- * table — is derived solely from the `result` argument. They must not read the
- * active route (getCurrentRoute / window.location.hash), so the rendered DOM is
- * identical no matter what hash is set when they run. The route-independence
- * tests below pin that by rendering the same `result` under different active
- * routes and asserting byte-for-byte identical output; the remaining tests add
- * result-only edge cases (empty results, search scope path, table swapping).
+ * `renderBrowse` and `renderSearch` derive everything they render — breadcrumb,
+ * status footer, and the results table — solely from the `result` argument.
+ * They must not read the active route (getCurrentRoute / window.location.hash),
+ * so the rendered DOM is identical no matter what hash is set when they run.
+ * The route-independence tests below pin that by rendering the same `result`
+ * under different active routes and asserting byte-for-byte identical output;
+ * the remaining tests add result-only edge cases (empty results, search scope
+ * path, table swapping).
  * ========================================================================= */
 describe('render output depends only on result (route is irrelevant)', () => {
   it('renderBrowse produces identical output regardless of the active route', async () => {
@@ -274,21 +270,20 @@ describe('render orchestration', () => {
  *
  * Two interrelated startApp/render bugs are pinned here:
  *
- *  (a) LISTENER LEAK — startApp calls subscribe(render) and used to throw away
- *      the returned unsubscribe function, so every re-mount left the previous
- *      mount's hashchange listener on `window`. (happy-dom dedups identical
+ *  (a) LISTENER LEAK — every re-mount must clean up the previous mount's
+ *      hashchange listener on `window`. (happy-dom dedups identical
  *      function references, so this leak is latent rather than multiplicative
  *      in this environment, but the cleanup contract is still asserted via the
  *      addEventListener/removeEventListener spies below.)
- *  (b) RENDER RACE — render() is async; two rapid navigations let a slower
- *      fetch overwrite a fresher one's results. The fix aborts a superseded
- *      render after each await.
+ *  (b) RENDER RACE — render() is async; two rapid navigations could let a
+ *      slower fetch overwrite a fresher one's results. A superseded render is
+ *      aborted after each await.
  * ========================================================================= */
 describe('rendering lifecycle', () => {
   describe('hashchange listener cleanup on re-mount', () => {
     /**
      * Mount the app `n` times into fresh containers, the way `setup()` does.
-     * Returns nothing; used to drive repeated startApp() calls with the spies
+     * Returns nothing; drives repeated startApp() calls with the spies
      * already installed so every subscribe/unsubscribe is captured.
      */
     function mountNTimes(n: number): void {

@@ -4,7 +4,7 @@ node_modules/
 wwwroot/
 bin/
 obj/
-dist/
+wwwroot/dist/
 coverage/
 
 # Reference / sample data (do not reformat)

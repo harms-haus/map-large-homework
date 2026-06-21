@@ -1030,6 +1030,133 @@ public class FileServiceTests : IDisposable
         await Assert.ThrowsAsync<ArgumentException>(() => service.UploadAsync("", file));
     }
 
+    // ---------------------------------------------------------------------
+    // UploadAsync return value (stored relative path).
+    //
+    // UploadAsync returns the normalized, forward-slash relative path of the
+    // file it actually stored — sourced from the service's own ToRelative
+    // helper so the controller no longer needs to reconstruct (and
+    // re-normalize) the path client-side. The returned path reflects the
+    // SANITIZED file name (traversal stripped, Windows-illegal names rejected)
+    // and the real on-disk location, never the raw request input. These tests
+    // pin that contract and the round-trip invariant (the returned path
+    // resolves back to the file that was just written).
+    // ---------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("", "report.txt", "report.txt")]
+    [InlineData("docs", "report.txt", "docs/report.txt")]
+    [InlineData("docs/sub", "report.txt", "docs/sub/report.txt")]
+    [InlineData("a/b/c", "report.txt", "a/b/c/report.txt")]
+    public async Task UploadAsync_ReturnsStoredRelativePath(string dir, string fileName, string expected)
+    {
+        var (service, _) = CreateService();
+        var file = FormFileFactory.CreateFormFile(fileName, "payload");
+
+        var returned = await service.UploadAsync(dir, file);
+
+        Assert.Equal(expected, returned);
+    }
+
+    [Theory]
+    [InlineData("docs/", "docs/report.txt")]          // trailing slash collapsed
+    [InlineData("docs/./sub", "docs/sub/report.txt")]   // redundant '.' removed
+    [InlineData("docs/sub/..", "docs/report.txt")]      // '..' resolved back inside root
+    [InlineData("docs/sub/.", "docs/sub/report.txt")]   // trailing '.' removed
+    public async Task UploadAsync_ReturnsNormalizedDirectoryPath_WhenAlreadyInsideRoot(string dir, string expected)
+    {
+        // The directory portion is normalized by SafeResolve (via
+        // Path.GetFullPath) before storage, so the returned path is canonical
+        // even when the request path carries redundant '.', '..', or trailing
+        // slashes — provided the path stays inside the sandbox. (This replaces
+        // the controller-side directory normalization that was removed.)
+        var (service, _) = CreateService();
+        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
+
+        var returned = await service.UploadAsync(dir, file);
+
+        Assert.Equal(expected, returned);
+    }
+
+    [Theory]
+    [InlineData("../report.txt", "report.txt")]      // traversal stripped to last safe segment
+    [InlineData("../../report.txt", "report.txt")]
+    [InlineData("/report.txt", "report.txt")]         // leading separator stripped
+    public async Task UploadAsync_ReturnedPath_ReflectsSanitizedFileName_NotRawInput(
+        string fileName, string expectedFileName)
+    {
+        // The returned path must carry only the safe final segment the service
+        // stored, never the raw (possibly traversal-laden) file name the
+        // client submitted. This is the service-side replacement for the old
+        // controller-level "strip traversal from file name" contract.
+        var (service, _) = CreateService();
+        var file = FormFileFactory.CreateFormFile(fileName, "payload");
+
+        var returned = await service.UploadAsync("", file);
+
+        Assert.Equal(expectedFileName, returned);
+    }
+
+    [Fact]
+    public async Task UploadAsync_ReturnedPath_PreservesSafeFileName()
+    {
+        var (service, _) = CreateService();
+        var file = FormFileFactory.CreateFormFile("report (final)-v2.txt", "x");
+
+        var returned = await service.UploadAsync("docs", file);
+
+        Assert.Equal("docs/report (final)-v2.txt", returned);
+    }
+
+    [Fact]
+    public async Task UploadAsync_ReturnedPath_StripsTraversalFromFileName_ButKeepsDirectory()
+    {
+        // A file name containing an embedded traversal collapses to its final
+        // safe segment, which is then joined under the requested directory —
+        // the traversal never escapes into the directory portion of the path.
+        var (service, _) = CreateService();
+        var file = FormFileFactory.CreateFormFile("sub/../pwned.txt", "payload");
+
+        var returned = await service.UploadAsync("docs", file);
+
+        Assert.Equal("docs/pwned.txt", returned);
+    }
+
+    [Fact]
+    public async Task UploadAsync_ReturnsForwardSlashRelativePath_RegardlessOfPlatform()
+    {
+        // ToRelative always emits forward slashes and trims the leading
+        // separator, so the returned path is a clean relative path on every
+        // platform (the OS may store it with '\' on Windows, but the API
+        // contract is forward-slash).
+        var (service, _) = CreateService();
+        var file = FormFileFactory.CreateFormFile("report.txt", "x");
+
+        var returned = await service.UploadAsync("deep/nested/dir", file);
+
+        Assert.DoesNotContain('\\', returned);
+        Assert.False(Path.IsPathRooted(returned));
+        Assert.Equal("deep/nested/dir/report.txt", returned);
+    }
+
+    [Fact]
+    public async Task UploadAsync_ReturnedPath_ResolvesBackToStoredFile_WithExpectedContent()
+    {
+        // Round-trip invariant: the returned relative path must resolve (via
+        // ResolveFullPath) to the exact file that was just written, carrying
+        // the expected content. Ties the return value to real on-disk storage.
+        var (service, root) = CreateService();
+        var file = FormFileFactory.CreateFormFile("report.txt", "the-content");
+
+        var returned = await service.UploadAsync("docs/sub", file);
+
+        var resolved = service.ResolveFullPath(returned);
+        var expected = Path.GetFullPath(Path.Combine(root, "docs", "sub", "report.txt"));
+        Assert.Equal(expected, resolved);
+        Assert.True(File.Exists(resolved));
+        Assert.Equal("the-content", await File.ReadAllTextAsync(resolved));
+    }
+
     // =====================================================================
     // Delete
     // =====================================================================

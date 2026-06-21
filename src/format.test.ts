@@ -1,30 +1,23 @@
 import { describe, it, expect } from 'vitest';
 import * as formatModule from './format';
-import {
-  formatBytes,
-  normalizeRelativePath,
-  joinPath,
-  parentPath,
-  basename,
-  formatDate,
-} from './format';
+import { formatBytes, normalizeRelativePath, joinPath, formatDate } from './format';
 
 /* ===========================================================================
  * Module surface
  *
- * The spec requires that `src/format.ts` exports ONLY these six functions and
- * nothing else. This guard test pins that contract so a stray export does not
- * sneak in.
+ * `src/format.ts` exports ONLY these four functions and nothing else. This
+ * guard test pins that contract so a stray export does not sneak in — and so
+ * the removal of the dead `parentPath` / `basename` exports (which production
+ * code never imported) cannot be silently re-added. Production consumes exactly
+ * this set: formatBytes, formatDate, joinPath, normalizeRelativePath.
  * ========================================================================= */
 describe('format module surface', () => {
-  it('exports exactly the six documented functions', () => {
+  it('exports exactly the four documented functions', () => {
     expect(Object.keys(formatModule).sort()).toEqual([
-      'basename',
       'formatBytes',
       'formatDate',
       'joinPath',
       'normalizeRelativePath',
-      'parentPath',
     ]);
   });
 });
@@ -185,6 +178,21 @@ describe('normalizeRelativePath', () => {
     // segments: [a, .., .., b, ..] -> filter dots -> [a, b]
     expect(normalizeRelativePath('a/../../b/..')).toBe('a/b');
   });
+
+  it('preserves dots WITHIN segment names (only exact "." / ".." are dropped)', () => {
+    // A segment is dropped only when it is exactly "." or "..". Dots inside a
+    // real segment (file extensions, dotfiles, names like "..hidden") must be
+    // kept verbatim — a regression that filtered any segment *containing* a dot
+    // would silently mangle every filename in the browser. This pins the
+    // filter's exact-match semantics on behalf of the KEPT function.
+    expect(normalizeRelativePath('file.tar.gz')).toBe('file.tar.gz');
+    expect(normalizeRelativePath('a/b.txt/c.d')).toBe('a/b.txt/c.d');
+    expect(normalizeRelativePath('.gitignore')).toBe('.gitignore');
+    expect(normalizeRelativePath('docs/.gitignore')).toBe('docs/.gitignore');
+    // "..hidden" and "..." are not exactly "..", so they survive.
+    expect(normalizeRelativePath('..hidden')).toBe('..hidden');
+    expect(normalizeRelativePath('a/.../b')).toBe('a/.../b');
+  });
 });
 
 /* ===========================================================================
@@ -229,75 +237,15 @@ describe('joinPath', () => {
   it('normalizes backslashes in the joined result', () => {
     expect(joinPath('foo\\', 'bar')).toBe('foo/bar');
   });
-});
 
-/* ===========================================================================
- * parentPath
- *
- * Normalized parent relative path; '' when already at root.
- * ========================================================================= */
-describe('parentPath', () => {
-  it('returns empty string for an already-root path', () => {
-    expect(parentPath('')).toBe('');
-  });
-
-  it('returns empty string for a single-segment path', () => {
-    expect(parentPath('foo')).toBe('');
-  });
-
-  it('returns the parent of a two-segment path', () => {
-    expect(parentPath('foo/bar')).toBe('foo');
-  });
-
-  it('returns the parent of a deeper path', () => {
-    expect(parentPath('a/b/c')).toBe('a/b');
-  });
-
-  it('normalizes before computing the parent', () => {
-    expect(parentPath('/foo/bar/')).toBe('foo');
-  });
-
-  it('normalizes "." segments before computing the parent', () => {
-    expect(parentPath('a/./b')).toBe('a');
-  });
-
-  it('normalizes backslashes before computing the parent', () => {
-    expect(parentPath('foo\\bar\\baz')).toBe('foo/bar');
-  });
-});
-
-/* ===========================================================================
- * basename
- *
- * The last segment of the normalized path.
- * ========================================================================= */
-describe('basename', () => {
-  it('returns empty string for an empty path', () => {
-    expect(basename('')).toBe('');
-  });
-
-  it('returns the single segment of a shallow path', () => {
-    expect(basename('foo')).toBe('foo');
-  });
-
-  it('returns the last segment of a multi-segment path', () => {
-    expect(basename('foo/bar')).toBe('bar');
-  });
-
-  it('returns the last segment of a deeper path', () => {
-    expect(basename('a/b/c')).toBe('c');
-  });
-
-  it('normalizes leading/trailing slashes before taking the last segment', () => {
-    expect(basename('/foo/bar/')).toBe('bar');
-  });
-
-  it('normalizes backslashes before taking the last segment', () => {
-    expect(basename('foo\\bar')).toBe('bar');
-  });
-
-  it('ignores a trailing "." segment when computing the basename', () => {
-    expect(basename('foo/bar/.')).toBe('bar');
+  it('preserves dots in the joined name (filenames, extensions, dotfiles)', () => {
+    // joinPath delegates to normalizeRelativePath, so a name carrying dots
+    // (a real filename, an extension, a dotfile) must round-trip unchanged.
+    // joinPath builds new-directory paths and breadcrumb cumulative paths
+    // in production.
+    expect(joinPath('docs', 'report.final.txt')).toBe('docs/report.final.txt');
+    expect(joinPath('docs', '.gitignore')).toBe('docs/.gitignore');
+    expect(joinPath('a/b', 'c.archive.tar.gz')).toBe('a/b/c.archive.tar.gz');
   });
 });
 

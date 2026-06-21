@@ -1,11 +1,9 @@
 /**
  * Shared test helpers for the `src/app/*.test.ts` per-domain test files.
  *
- * Extracted verbatim from the former `src/app.test.ts` monolith (split per
- * task-29) so each focused test file can import only what it needs. Houses:
+ * Houses shared utilities for the `src/app/*.test.ts` per-domain test files:
  *
- *   - fixture builders: `fileEntry`, `browseResult`, `joinPathHelper`,
- *     `browseRoute`, `searchRoute`
+ *   - fixture builders: `fileEntry`, `browseResult`, `joinPathHelper`
  *   - timing: `flush`
  *   - DOM scaffolding: `setup`, `setupCleared`, `SetupCtx`
  *   - table/row traversal: `dataRows`, `rowByName`, `cellsOf`,
@@ -13,23 +11,14 @@
  *   - the shared per-test fetch stub lifecycle: `installAppTestLifecycle` plus
  *     the `fetchMock` live binding it rebinds each test
  *
- * `browseRoute` / `searchRoute` construct `Route` fixtures. They were
- * referenced by the dead-CSS characterization suite in the monolith but never
- * defined (a latent bug that left those tests throwing `ReferenceError`); they
- * are defined here so those scenarios finally run. `renderBrowse` /
- * `renderSearch` no longer take a `route` argument (its removal is pinned by
- * the route-independence suite), so the value is ignored at runtime — but it
- * must be a defined expression rather than a bare `ReferenceError`.
- *
  * Test-only utility: deliberately kept out of the production `tsc` build via
  * the `src/app/test-helpers.ts` entry in `tsconfig.json`'s `exclude` array
- * (mirroring the `src/test-utils/**` glob added by task-27), so it is never
+ * (mirroring the `src/test-utils/**` glob pattern), so it is never
  * shipped to `wwwroot/dist`. Only test files import it.
  */
 import { vi, beforeEach, afterEach } from 'vitest';
 import { startApp } from '../app';
 import type { BrowseResult, FileEntry, SearchResult } from '../api';
-import type { Route } from '../router';
 import { mockResponse } from '../test-utils/mock-response';
 
 /* ===========================================================================
@@ -64,16 +53,6 @@ export function browseResult(opts: Partial<BrowseResult> = {}): BrowseResult {
 // local join to avoid pulling joinPath into the test's asserted import set
 export function joinPathHelper(base: string, name: string): string {
   return (base ? base + '/' : '') + name;
-}
-
-/** Build a browse `Route` fixture. */
-export function browseRoute(path: string): Route {
-  return { view: 'browse', path, query: '' };
-}
-
-/** Build a search `Route` fixture. */
-export function searchRoute(query: string, path: string = ''): Route {
-  return { view: 'search', query, path };
 }
 
 /* ===========================================================================
@@ -177,8 +156,8 @@ export function buttonsByText(container: Element, text: string): HTMLButtonEleme
  * `fetchMock` is an `export let` live binding: `installAppTestLifecycle()`'s
  * `beforeEach` rebinds it to a fresh permissive `vi.fn` each test, and every
  * importer sees the rebound value (ESM live bindings — verified against this
- * vitest setup). Tests therefore read `fetchMock.mock.calls` exactly as the
- * monolith did, with no per-file `let fetchMock` declaration.
+ * vitest setup). Tests therefore read `fetchMock.mock.calls` directly, without
+ * a per-file `let fetchMock` declaration.
  * ========================================================================= */
 
 export let fetchMock: ReturnType<typeof vi.fn> = vi.fn(async () => mockResponse({ body: {} }));

@@ -30,9 +30,12 @@ public interface IFileService
 
     /// <summary>
     /// Writes the uploaded <paramref name="file"/> into the directory at
-    /// <paramref name="relativeDirPath"/>, creating it if necessary.
+    /// <paramref name="relativeDirPath"/>, creating it if necessary, and
+    /// returns the stored file's normalized relative path (the home root
+    /// becomes the empty string). The returned path reflects the sanitized
+    /// file name actually written to disk.
     /// </summary>
-    Task UploadAsync(string relativeDirPath, IFormFile file);
+    Task<string> UploadAsync(string relativeDirPath, IFormFile file);
 
     /// <summary>
     /// Deletes the file or directory (recursively) at <paramref name="relativePath"/>.

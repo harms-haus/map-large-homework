@@ -7,8 +7,10 @@
  * app.
  */
 import type { SearchResult } from '../api.js';
-import { buildTable, makeSearchRow, renderBreadcrumb } from './dom-builders.js';
+import { renderBreadcrumb } from './breadcrumb.js';
 import { getResults, getStatus } from './context.js';
+import { makeSearchRow } from './rows.js';
+import { buildTable } from './tables.js';
 
 export function renderSearch(result: SearchResult): void {
   // Breadcrumb reflects the search-scope path.

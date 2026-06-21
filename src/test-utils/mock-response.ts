@@ -7,12 +7,9 @@
  * an empty object. `ok` is derived from `status` (true for any 2xx) unless an
  * explicit `ok` is supplied, in which case it wins.
  *
- * This is the UNION of the two previously-inline helpers that lived in
- * `src/api.test.ts` and `src/app.test.ts`. They were identical except in the
- * `json()` fallback for the text-only case: the `app` copy returned `{}`,
- * whereas the `api` copy parsed the text as JSON. Parsing is the more
- * permissive behavior (a strict superset) and is preserved here so every
- * existing call site keeps working. (No call site actually relies on this
+ * The `json()` method prefers an explicit `body` when supplied. When only
+ * `text` was given, it parses the text as JSON; when neither is supplied it
+ * falls back to an empty object `{}`. (No call site actually relies on this
  * branch: on the error path `ApiClient.request` only reads `.text()`, and on
  * the success path a `body` is always supplied.) The behavior is pinned by the
  * `mockResponse helper` characterization suite in `src/api.test.ts`.

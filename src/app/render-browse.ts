@@ -10,14 +10,11 @@
  */
 import type { BrowseResult } from '../api.js';
 import { formatBytes } from '../format.js';
-import {
-  buildTable,
-  makeBrowseRow,
-  makeParentRow,
-  renderBreadcrumb,
-  setupDirContextMenu,
-} from './dom-builders.js';
-import { getResults, getStatus } from './context.js';
+import { renderBreadcrumb } from './breadcrumb.js';
+import { getResults, getStatus, getMenuState } from './context.js';
+import { setupDirContextMenu } from './menus.js';
+import { makeBrowseRow, makeParentRow } from './rows.js';
+import { buildTable } from './tables.js';
 
 export function renderBrowse(result: BrowseResult): void {
   // Breadcrumb (clickable cumulative-path segments)
@@ -38,11 +35,15 @@ export function renderBrowse(result: BrowseResult): void {
   table.classList.add('browse-table');
   const tbody = table.querySelector('tbody')!;
 
+  // Per-mount menu state (row + directory menus) — threaded into the row and
+  // directory-menu builders so the single-open invariant is scoped to this
+  // mount rather than a shared module-level singleton.
+  const menuState = getMenuState();
   if (result.parent !== null) {
     tbody.append(makeParentRow(result.parent));
   }
   for (const entry of result.entries) {
-    tbody.append(makeBrowseRow(entry));
+    tbody.append(makeBrowseRow(entry, menuState));
   }
 
   resultsEl.append(table);
@@ -51,5 +52,5 @@ export function renderBrowse(result: BrowseResult): void {
   // wire its listener. Rebuilds the menu each render for the current path; the
   // listener attaches once. Must run AFTER the table is appended so the menu
   // is a later sibling (document order) than the row menus inside the table.
-  setupDirContextMenu(resultsEl, result.path);
+  setupDirContextMenu(resultsEl, result.path, menuState);
 }

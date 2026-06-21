@@ -4,13 +4,12 @@
  * move wiring, and the two characterization suites that pin app.ts's retained
  * imports and its (dead-)CSS-selector-relevant DOM output.
  *
- * Split out of the former `src/app.test.ts` monolith (task-29). The shared
- * fixtures, DOM scaffolding, and the per-test fetch stub come from
+ * Shared fixtures, DOM scaffolding, and the per-test fetch stub come from
  * `./test-helpers`.
  *
  * Environment: the project-default `happy-dom` (these tests need a DOM).
  *
- * Contract decisions encoded by these suites (carried over from the monolith):
+ * Contract decisions encoded by these suites:
  *  - The action controls Delete / Move / Copy are `<button>` elements whose
  *    trimmed `textContent` is exactly `"Delete"` / `"Move"` / `"Copy"`.
  *  - Importing `./app` must not side-effect when there is no `#app` element.
@@ -27,8 +26,6 @@ import {
   rowByName,
   clickNameLink,
   dataRows,
-  browseRoute,
-  searchRoute,
   installAppTestLifecycle,
 } from './test-helpers';
 
@@ -120,7 +117,7 @@ describe('startApp', () => {
       expect(searchWrapper.contains(searchClearBtn)).toBe(true);
     });
 
-    it('does NOT render a Search button (removed in favor of instant debounced search)', () => {
+    it('does NOT render a standalone Search button (search fires via debounced input)', () => {
       const { root } = setup();
       const buttons = Array.from(root.querySelectorAll('button'));
       const searchButtons = buttons.filter((b) => (b.textContent ?? '').trim() === 'Search');
@@ -220,20 +217,14 @@ describe('startApp', () => {
 });
 
 /* ===========================================================================
- * Import characterization (safety net for unused-import removal)
+ * Import characterization
  *
- * `src/app.ts` imports `parseHash` (from ./router.js), `parentPath`, and
- * `basename` (from ./format.js) that are never referenced in the module body
- * and are slated for removal. Removing unused imports cannot change runtime
- * behavior, so these tests guard the OTHER behaviors: they pin the observable
- * outputs that depend on the imports which STAY — especially the ones that
- * share an import line with the removed names, where a careless edit could
- * drop a needed sibling. Each assertion checks a concrete value tied to one
- * retained import's real usage in the app; if that import were removed, the
- * referenced call would throw (ReferenceError) or emit wrong output and the
- * test would fail.
+ * Each import used by app.ts is exercised through concrete observable outputs,
+ * providing a safety net against accidental removal: if an import were removed,
+ * the referenced call would throw (ReferenceError) or emit wrong output and
+ * the test would fail.
  *
- * Retained imports exercised here:
+ * Imports exercised here:
  *   format.js: joinPath, normalizeRelativePath, formatBytes, formatDate
  *   router.js: toBrowseHash, toSearchHash
  * (getCurrentRoute / subscribe / navigate are already covered by the render
@@ -247,7 +238,7 @@ describe('import characterization (KEEP-list behaviors)', () => {
     ) as HTMLElement | undefined;
   }
 
-  /* --- format.js KEEP imports (siblings of the removed parentPath/basename) --- */
+  /* --- format.js imports exercised here --- */
 
   describe('joinPath (breadcrumb cumulative paths)', () => {
     it('joins each cumulative segment across three path levels', async () => {
@@ -294,7 +285,7 @@ describe('import characterization (KEEP-list behaviors)', () => {
     });
   });
 
-  /* --- router.js KEEP imports (siblings of the removed parseHash) --- */
+  /* --- router.js imports exercised here --- */
 
   describe('toBrowseHash (per-segment percent-encoding)', () => {
     it('encodes spaces in directory names when navigating into a folder', async () => {
@@ -334,41 +325,31 @@ describe('import characterization (KEEP-list behaviors)', () => {
 /* ===========================================================================
  * Dead CSS selector characterization
  *
- * `src/app.css` ships rule blocks whose selectors are NEVER emitted by app.ts,
- * so they have ZERO observable effect on the rendered UI. They are slated for
- * deletion in a dead-code cleanup. The tests below pin the JS-side invariants
- * that make that deletion provably safe:
+ * `src/app.css` ships rule blocks whose selectors are never emitted by app.ts,
+ * so they have zero observable effect on the rendered UI. The tests below pin
+ * the JS-side invariants:
  *
- *   - the rendered DOM must never produce an element the removed selectors
+ *   - the rendered DOM must never produce an element the unused selectors
  *     could match; and
- *   - any behavior the dead rules *appear* to supply must actually be provided
- *     by an independent mechanism that survives the deletion.
+ *   - any behavior the unused rules *appear* to supply is provided by an
+ *     independent mechanism.
  *
- * Removed selectors under test:
+ * Unused selectors under test:
  *   (1) `.breadcrumb .separator`         — breadcrumb separators are class-less
  *       `<span>`s holding the literal "/"; nothing carries `separator`.
  *   (2) `.toolbar label.upload-btn` (+ its `:hover` + the descendant
- *       `input[type=file]` rule) — historically dead because the upload label
- *       used `btn`, never `upload-btn`. The toolbar upload control has since
- *       been removed entirely (upload is now reached via the folder/directory
- *       context menus), so these selectors match even less; the suite below
- *       pins only the still-relevant breadcrumb invariant.
+ *       `input[type=file]` rule) — toolbar upload is reached via the
+ *       folder/directory context menus, so this label selector never matches.
+ *       The suite below pins only the still-relevant breadcrumb invariant.
  *
- * (`.folder-row` was formerly in this dead list, but it is now a LIVE class:
- * folder rows and the ".." parent row carry `folder-row` / `parent-row` so the
- * whole row is click-to-browse — see the dedicated suite below.)
+ * (`.folder-row` is intentionally NOT in this list: folder rows and the ".."
+ * parent row carry `folder-row` / `parent-row` so the whole row is
+ * click-to-browse — see the dedicated suite below.)
  *
- * These assertions pass against the current (pre-cleanup) code AND must keep
- * passing after the dead rules are deleted, because they depend only on the
- * DOM app.ts emits — which the cleanup does not touch. (The environment does
- * not load app.css, so a missing rule cannot change `getComputedStyle` here;
- * these tests instead prove the rule could never have matched anything.)
- *
- * NOTE: these tests pass a `Route` fixture (`browseRoute` / `searchRoute`) as
- * a second argument to `renderBrowse` / `renderSearch`. That argument is a
- * leftover from before the route parameter was removed (see the
- * route-independence suite in `render-orchestration.test.ts`) and is silently
- * ignored at runtime; it is preserved verbatim so the scenario is unchanged.
+ * These assertions depend only on the DOM app.ts emits, not on any CSS rule.
+ * The environment does not load app.css, so a missing rule cannot change
+ * `getComputedStyle` here; these tests instead prove the rule could never
+ * have matched anything.)
  * ========================================================================= */
 describe('dead CSS selector characterization', () => {
   describe('breadcrumb separators are class-less spans (no `.separator`)', () => {
@@ -381,7 +362,7 @@ describe('dead CSS selector characterization', () => {
 
     it('renders one "/" separator per path segment, each a class-less <span>', async () => {
       const { breadcrumb } = await setupCleared();
-      renderBrowse(browseResult({ path: 'a/b/c', entries: [] }), browseRoute('a/b/c'));
+      renderBrowse(browseResult({ path: 'a/b/c', entries: [] }));
 
       const separators = slashSeparators(breadcrumb);
       // a/b/c → 3 segments → 3 separators (Home / a / b / c). Verifying the
@@ -398,7 +379,7 @@ describe('dead CSS selector characterization', () => {
 
     it('renders no separators for the root path, and still no `.separator` anywhere', async () => {
       const { breadcrumb } = await setupCleared();
-      renderBrowse(browseResult({ path: '', entries: [] }), browseRoute(''));
+      renderBrowse(browseResult({ path: '', entries: [] }));
 
       expect(slashSeparators(breadcrumb)).toHaveLength(0);
       expect(document.querySelectorAll('.separator')).toHaveLength(0);
@@ -406,7 +387,7 @@ describe('dead CSS selector characterization', () => {
 
     it('search-scope breadcrumbs also use class-less "/" separators', async () => {
       const { breadcrumb } = await setupCleared();
-      renderSearch({ query: 'q', path: 'x/y', results: [] }, searchRoute('q', 'x/y'));
+      renderSearch({ query: 'q', path: 'x/y', results: [] });
 
       const separators = slashSeparators(breadcrumb);
       expect(separators).toHaveLength(2);

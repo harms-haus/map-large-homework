@@ -28,6 +28,12 @@ public sealed class FakeFileService : IFileService
     public BrowseResultDto BrowseResult = new(string.Empty, null, Array.Empty<FileEntryDto>(), 0, 0, 0L);
     public SearchResultDto SearchResult = new(string.Empty, string.Empty, Array.Empty<FileEntryDto>());
     public string ResolvedPath = string.Empty;
+    /// <summary>
+    /// The stored relative path <see cref="UploadAsync"/> reports back to the
+    /// caller. Mirrors the real <c>FileService.UploadAsync</c> return value so
+    /// controller tests can assert the returned path is echoed verbatim.
+    /// </summary>
+    public string UploadedPath = string.Empty;
     public Exception? BrowseException;
     public Exception? SearchException;
     public Exception? ResolveException;
@@ -59,12 +65,12 @@ public sealed class FakeFileService : IFileService
         return ResolvedPath;
     }
 
-    public Task UploadAsync(string relativeDirPath, IFormFile file)
+    public Task<string> UploadAsync(string relativeDirPath, IFormFile file)
     {
         UploadDirPath = relativeDirPath;
         UploadFile = file;
         if (UploadException is not null) throw UploadException;
-        return Task.CompletedTask;
+        return Task.FromResult(UploadedPath);
     }
 
     public void Delete(string relativePath)

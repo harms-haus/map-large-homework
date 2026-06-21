@@ -18,8 +18,9 @@ async function main() {
   const destPath = resolve(outDir, 'app.css');
   try {
     await copyFile(srcPath, destPath);
-  } catch {
+  } catch (err) {
     // If src/app.css doesn't exist, skip silently.
+    if (err.code !== 'ENOENT') throw err;
   }
 
   // --- Bootstrap Icons (icon pack) ---

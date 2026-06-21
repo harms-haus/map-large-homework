@@ -3,13 +3,12 @@
  * per-result columns, directory-name navigation, file-name download, and the
  * status footer).
  *
- * Split out of the former `src/app.test.ts` monolith (task-29). Shared
- * fixtures, DOM scaffolding, and the per-test fetch stub come from
+ * Shared fixtures, DOM scaffolding, and the per-test fetch stub come from
  * `./test-helpers`.
  *
  * Environment: the project-default `happy-dom` (these tests need a DOM).
  *
- * Contract decisions encoded here (carried over from the monolith):
+ * Contract decisions encoded here:
  *  - Clicking a directory result name navigates (asserted via
  *    `window.location.hash`); clicking a search-result FILE name opens its
  *    download URL. The spec does not pin the file-open mechanism, so that test

@@ -3,13 +3,12 @@
  * columns, in-app navigation, the Actions column with Download/Delete/Move/Copy
  * + their error surfacing, the breadcrumb, and the status footer).
  *
- * Split out of the former `src/app.test.ts` monolith (task-29). Shared
- * fixtures, DOM scaffolding, and the per-test fetch stub come from
+ * Shared fixtures, DOM scaffolding, and the per-test fetch stub come from
  * `./test-helpers`.
  *
  * Environment: the project-default `happy-dom` (these tests need a DOM).
  *
- * Contract decisions encoded here (carried over from the monolith):
+ * Contract decisions encoded here:
  *  - In-app navigation (directory name links, the ".." parent row, breadcrumb
  *    segments) is verified by asserting on `window.location.hash` after a
  *    click — robust to either a `navigate(...)` call OR an
@@ -55,7 +54,7 @@ describe('renderBrowse', () => {
     const table = results.querySelector('table');
     expect(table).toBeTruthy();
     const headers = Array.from(table!.querySelectorAll('th')).map((h) => h.textContent!.trim());
-    // The Actions column has no visible header label now: the 4th <th> is
+    // The Actions column has no visible header label: the 4th <th> is
     // empty, but all four <th> remain so the header column count lines up
     // with the four <td> per body row (uniform :nth-child targeting).
     expect(headers).toEqual(['Name', 'Size', 'Modified', '']);

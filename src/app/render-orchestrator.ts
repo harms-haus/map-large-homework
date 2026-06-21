@@ -14,9 +14,22 @@
  */
 import { getCurrentRoute, subscribe } from '../router.js';
 import { normalizeRelativePath } from '../format.js';
-import { getApi, getResults, setRefs, setRenderHook, type DomRefs } from './context.js';
+import {
+  getApi,
+  getResults,
+  setMenuState,
+  setRefs,
+  setRenderHook,
+  type DomRefs,
+} from './context.js';
+import { createMenuState } from './menus.js';
 import { renderBrowse } from './render-browse.js';
 import { renderSearch } from './render-search.js';
+
+/** Threshold (ms) below which a search spinner is not shown.
+ *  Fast searches that complete within this window avoid flashing a loading
+ *  indicator; only searches that take longer display the spinner. */
+const SPINNER_DELAY_MS = 500;
 
 /* -------------------------------------------------------------------------
  * Rendering-lifecycle state
@@ -34,12 +47,15 @@ let unsubscribe: (() => void) | null = null;
 let renderToken = 0;
 
 /**
- * Bind the freshly-built DOM refs into the shared context, register `render`
- * as the re-render hook, tear down any previous mount's hashchange listener,
- * subscribe a new one, and kick off the initial render.
+ * Bind the freshly-built DOM refs into the shared context, create a fresh
+ * per-mount {@link MenuState} (so row/directory menu state never leaks across
+ * mounts), register `render` as the re-render hook, tear down any previous
+ * mount's hashchange listener, subscribe a new one, and kick off the initial
+ * render.
  */
 export function init(refs: DomRefs): void {
   setRefs(refs);
+  setMenuState(createMenuState());
   setRenderHook(render);
   // Tear down the previous mount's listener first (if any) so re-mounts never
   // accumulate hashchange listeners on `window`.
@@ -97,7 +113,7 @@ export async function render(): Promise<void> {
       spinnerIcon.className = 'bi bi-arrow-repeat spinning';
       spinnerWrap.appendChild(spinnerIcon);
       resultsEl.appendChild(spinnerWrap);
-    }, 500);
+    }, SPINNER_DELAY_MS);
   }
   try {
     if (route.view === 'browse') {

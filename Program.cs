@@ -14,7 +14,7 @@ namespace TestProject
             // path-safe IFileService implementation so controllers can be
             // activated through dependency injection.
             builder.Services.Configure<TestProject.Configuration.FileServiceOptions>(
-                builder.Configuration.GetSection("FileService"));
+                builder.Configuration.GetSection(TestProject.Configuration.FileServiceOptions.SectionName));
             builder.Services.AddSingleton<TestProject.Services.IFileService, TestProject.Services.FileService>();
 
             var app = builder.Build();

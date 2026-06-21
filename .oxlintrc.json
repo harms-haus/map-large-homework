@@ -6,7 +6,7 @@
     "wwwroot/",
     "bin/",
     "obj/",
-    "dist/",
+    "wwwroot/dist/",
     "SampleFiles/",
     "coverage/",
     "package-lock.json"

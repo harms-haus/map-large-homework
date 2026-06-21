@@ -3,8 +3,7 @@
  * clear-search handler, and the upload (change) handler, including the
  * per-file upload error-handling contract.
  *
- * Split out of the former `src/app.test.ts` monolith (task-29). Shared
- * fixtures, DOM scaffolding, and the per-test fetch stub come from
+ * Shared fixtures, DOM scaffolding, and the per-test fetch stub come from
  * `./test-helpers`.
  *
  * Environment: the project-default `happy-dom` (these tests need a DOM).
@@ -58,6 +57,32 @@ describe('toolbar handlers', () => {
 
         vi.advanceTimersByTime(50); // now 200ms since last keystroke
         expect(window.location.hash).toBe(toSearchHash('he', 'docs'));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('fires at exactly the 200ms debounce boundary — one ms earlier it does not', async () => {
+      // Pins the exact debounce value (200ms). The two tests above only bound
+      // it to a ~50ms band (150ms = no-fire, 200ms = fire), so a change to the
+      // extracted SEARCH_DEBOUNCE_MS constant anywhere inside (150, 200] —
+      // e.g. 175ms — would slip through unnoticed. Asserting 199ms = no-fire
+      // and 200ms = fire nails the value precisely.
+      vi.useFakeTimers();
+      try {
+        const { searchInput } = setup({ hash: toBrowseHash('docs') });
+        vi.advanceTimersByTime(1000); // settle initial render
+
+        searchInput.value = 'hello';
+        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+        // 199ms — one millisecond short of the threshold: still browsing.
+        vi.advanceTimersByTime(199);
+        expect(window.location.hash).toBe(toBrowseHash('docs'));
+
+        // The final millisecond (200ms total) trips the debounce.
+        vi.advanceTimersByTime(1);
+        expect(window.location.hash).toBe(toSearchHash('hello', 'docs'));
       } finally {
         vi.useRealTimers();
       }
@@ -405,6 +430,150 @@ describe('toolbar handlers', () => {
       expect(status.textContent).toMatch(/failed/i);
       expect(status.textContent).toContain('bad.txt');
       expect(status.textContent).not.toContain('good.txt');
+    });
+
+    /* ---------------------------------------------------------------------
+     * window `focus` fallback (the `cancel` event is non-standard)
+     *
+     * `cancel` on <input type=file> is NOT fired by every browser (older
+     * browsers, some embedded webviews). Without a fallback, dismissing the
+     * picker in such a browser fired NEITHER `change` NOR `cancel`, leaving
+     * the awaited promise pending forever and the transient <input> leaked in
+     * the DOM. The window regaining focus is the fallback settle signal.
+     *
+     * These tests pin down both the new fallback and the behaviour that must
+     * be preserved: a real `change` still wins (files aren't swallowed), the
+     * `settled` guard prevents double-resolution, and the focus listener is
+     * cleaned up once the promise settles.
+     * ------------------------------------------------------------------ */
+    describe('window focus fallback (cancel event is non-standard)', () => {
+      it('settles the awaited promise (no upload) when the window regains focus without a change/cancel event', async () => {
+        // Regression for the hang/memory-leak: in a browser that does NOT fire
+        // the non-standard `cancel` event, dismissing the picker left the
+        // awaited promise pending and the transient <input> in the DOM forever.
+        // The window `focus` event is the fallback settle signal.
+        vi.useFakeTimers();
+        try {
+          setup({ hash: toBrowseHash('docs') });
+
+          const p = pickAndUploadInto('target/folder');
+          const pickInput = findPickerInput();
+          expect(pickInput, 'transient picker input must be appended to body').toBeTruthy();
+
+          // Track resolution WITHOUT awaiting p directly, so a missing focus
+          // fallback fails this assertion fast instead of hanging on `await p`.
+          let resolved = false;
+          void p.then(() => {
+            resolved = true;
+          });
+
+          // Picker dismissed — window regains focus, no change/cancel dispatched.
+          window.dispatchEvent(new Event('focus'));
+          // The focus handler defers settling (so a real change can win first);
+          // advance past that grace window so finish([]) runs.
+          await vi.advanceTimersByTimeAsync(1000);
+
+          expect(resolved, 'promise must settle on window focus').toBe(true);
+          expect(uploadCalls(), 'nothing is uploaded when no files were chosen').toHaveLength(0);
+          expect(findPickerInput(), 'transient input is removed after settling').toBeUndefined();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('does not swallow a real selection: a change arriving after focus still uploads the chosen files', async () => {
+        // When files ARE chosen, the window regains focus and THEN `change`
+        // fires. The focus fallback must NOT resolve with [] before `change`
+        // can supply the files — a grace delay lets `change` win (the later
+        // focus timeout becomes a no-op via the `settled` guard). A naive
+        // immediate-focus handler would fail here with zero uploads.
+        vi.useFakeTimers();
+        try {
+          setup({ hash: toBrowseHash('docs') });
+
+          const p = pickAndUploadInto('target/folder');
+          const pickInput = findPickerInput();
+          expect(pickInput).toBeTruthy();
+
+          // Window regains focus first (schedules the deferred finish([]))...
+          window.dispatchEvent(new Event('focus'));
+          // ...then the selection arrives as `change` (input.files now set).
+          setFiles(pickInput!, ['a.txt', 'b.txt']);
+          pickInput!.dispatchEvent(new Event('change'));
+          // Advance past the focus grace window — finish([]) must be a no-op now.
+          await vi.advanceTimersByTimeAsync(1000);
+          await p;
+
+          expect(uploadCalls()).toHaveLength(2);
+          expect(
+            uploadCalls().every(([u]) =>
+              String(u).includes('path=' + encodeURIComponent('target/folder')),
+            ),
+          ).toBe(true);
+          expect(findPickerInput()).toBeUndefined();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('removes the focus fallback listener once the promise settles (no lingering window listener)', async () => {
+        // Cleanup contract: the transient focus listener is taken off `window`
+        // after settling so it does not outlive the picker. Spying on
+        // add/removeEventListener asserts the SAME handler reference that was
+        // registered is later removed (works whether cleanup is explicit in
+        // finish() or via { once: true }).
+        vi.useFakeTimers();
+        try {
+          setup({ hash: toBrowseHash('docs') });
+
+          const addSpy = vi.spyOn(window, 'addEventListener');
+          const removeSpy = vi.spyOn(window, 'removeEventListener');
+
+          const p = pickAndUploadInto('target/folder');
+          const pickInput = findPickerInput();
+          expect(pickInput).toBeTruthy();
+
+          // Settle via `change` WITHOUT dispatching focus, so the { once: true }
+          // auto-remove path is NOT what removes the listener — finish() must.
+          setFiles(pickInput!, ['a.txt']);
+          pickInput!.dispatchEvent(new Event('change'));
+          await vi.advanceTimersByTimeAsync(1000);
+          await p;
+
+          const focusReg = addSpy.mock.calls.find(([type]) => type === 'focus');
+          expect(focusReg, 'a focus fallback listener must be registered on window').toBeTruthy();
+          expect(removeSpy).toHaveBeenCalledWith('focus', focusReg![1]);
+          expect(findPickerInput()).toBeUndefined();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('never double-resolves: a focus event after change is a no-op (settled guard)', async () => {
+        // `change` settles the promise; a later `focus` must not re-resolve or
+        // re-run the upload loop (the `settled` guard). This pins down the
+        // single-resolution contract now that a second settle path exists.
+        vi.useFakeTimers();
+        try {
+          setup({ hash: toBrowseHash('docs') });
+
+          const p = pickAndUploadInto('target/folder');
+          const pickInput = findPickerInput();
+          expect(pickInput).toBeTruthy();
+
+          setFiles(pickInput!, ['only.txt']);
+          pickInput!.dispatchEvent(new Event('change'));
+          // Focus arrives AFTER change already settled — must be a no-op.
+          window.dispatchEvent(new Event('focus'));
+          await vi.advanceTimersByTimeAsync(1000);
+          await p;
+
+          expect(uploadCalls()).toHaveLength(1);
+          expect(findPickerInput()).toBeUndefined();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
     });
   });
 });

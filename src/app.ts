@@ -39,9 +39,9 @@
  * `textContent` / element creation — never via `innerHTML` — to prevent HTML
  * injection.
  *
- * `renderBrowse` and `renderSearch` are re-exported so `src/app.test.ts`'s
- * existing `import { startApp, renderBrowse, renderSearch } from './app'`
- * continues to resolve without modification.
+ * `renderBrowse` and `renderSearch` are re-exported so test suites and
+ * consumers can import them from the barrel module:
+ * `import { startApp, renderBrowse, renderSearch } from './app'`.
  */
 import { doSearch, clearSearch } from './app/toolbar-handlers.js';
 import { init } from './app/render-orchestrator.js';
@@ -49,6 +49,10 @@ import type { DomRefs } from './app/context.js';
 
 export { renderBrowse } from './app/render-browse.js';
 export { renderSearch } from './app/render-search.js';
+
+/** Delay (ms) after the last keystroke before firing a search query.
+ *  Prevents pounding the API on every character while keeping the UI responsive. */
+const SEARCH_DEBOUNCE_MS = 200;
 
 /* =========================================================================
  * startApp — build the DOM, wire events, bind refs, kick off rendering
@@ -162,7 +166,7 @@ export function startApp(root: HTMLElement): void {
     searchDebounceTimer = setTimeout(() => {
       searchDebounceTimer = null;
       doSearch();
-    }, 200);
+    }, SEARCH_DEBOUNCE_MS);
   });
   // Clear button: wipe the input and return to the browse view.
   searchClearBtn.addEventListener('click', clearSearch);

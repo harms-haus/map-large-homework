@@ -30,7 +30,7 @@ Open the HTTPS URL printed in the console (e.g. `https://localhost:7146`). Click
 
 The server's home directory (where files are stored) is configurable via the `FileService:HomeDirectory` setting.
 
-- **appsettings.json**: set `FileService.HomeDirectory` (default is `"Home"`).
+- **appsettings.json**: set `FileService.HomeDirectory` (default is `"SampleFiles"`).
 - **Environment variable**: set `FileService__HomeDirectory` (double underscore).
 
 Relative paths resolve under the app content root. The folder is created automatically on first use (lazily, the first time a file-system operation targets it), so a misconfigured path surfaces on the first request rather than at startup.

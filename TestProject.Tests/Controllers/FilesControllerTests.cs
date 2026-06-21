@@ -16,7 +16,8 @@ namespace TestProject.Tests.Controllers;
 /// on the returned <see cref="IActionResult"/>: the happy paths verify that
 /// the service is invoked with the normalized inputs and that the response
 /// payload has the documented shape, while the error paths verify that the
-/// five catch-and-translate exception types yield a 400 with the message.
+/// three translated exception roots (and their subtypes) yield a 400 with the
+/// message.
 ///
 /// The controller is exercised directly (not through the ASP.NET Core
 /// pipeline) so model-binding attributes like <c>[FromQuery]</c> are not
@@ -25,30 +26,44 @@ namespace TestProject.Tests.Controllers;
 public class FilesControllerTests
 {
     /// <summary>
-    /// The five exception types the controller must catch and translate into
-    /// a <c>BadRequest</c>. Note <see cref="DirectoryNotFoundException"/> and
-    /// <see cref="FileNotFoundException"/> are <see cref="IOException"/>
-    /// subtypes, but are enumerated explicitly to match the documented
-    /// catch list.
+    /// The exception types the controller must catch and translate into a
+    /// <c>BadRequest</c>. The translation targets three root types —
+    /// <see cref="ArgumentException"/>, <see cref="UnauthorizedAccessException"/>
+    /// and <see cref="IOException"/> — and relies on inheritance to also catch
+    /// their subtypes. <see cref="DirectoryNotFoundException"/>,
+    /// <see cref="FileNotFoundException"/>, <see cref="PathTooLongException"/>,
+    /// <see cref="EndOfStreamException"/> and <see cref="FileLoadException"/> are
+    /// all <see cref="IOException"/> subtypes, so a single IOException branch
+    /// catches them all (the former two used to be enumerated explicitly but
+    /// are redundant); <see cref="ArgumentNullException"/> and
+    /// <see cref="ArgumentOutOfRangeException"/> are <see cref="ArgumentException"/>
+    /// subtypes. These cases pin that the inherited-subtype contract holds for
+    /// every translated root — not just the ones previously named by hand.
     /// </summary>
     public static IEnumerable<object[]> CaughtExceptions()
     {
-        // The five exception types the controller documents and catches by
-        // name. Each must map to a 400 carrying its Message.
+        // The three root types the controller documents and catches. Each must
+        // map to a 400 carrying its Message.
         yield return new object[] { new ArgumentException("arg-message") };
         yield return new object[] { new UnauthorizedAccessException("unauth-message") };
-        yield return new object[] { new DirectoryNotFoundException("dir-message") };
-        yield return new object[] { new FileNotFoundException("file-message") };
         yield return new object[] { new IOException("io-message") };
 
-        // Subtypes that must be caught by virtue of inheritance. The catch
-        // list names base types (ArgumentException, IOException), so derived
-        // exceptions must ALSO resolve to 400; exact-type matching would let
-        // these leak through as unhandled. These cases pin the
-        // inheritance-based contract of the shared helper.
+        // IOException subtypes that must be caught by virtue of inheritance.
+        // The translation names only the IOException root, so EVERY derived
+        // subtype must ALSO resolve to 400; exact-type matching would let these
+        // leak through unhandled. This pins the consolidation that folds the
+        // former explicit DirectoryNotFound/FileNotFound catches into the single
+        // IOException branch, and broadens coverage to BCL subtypes that were
+        // never named before (EndOfStream/FileLoad).
+        yield return new object[] { new DirectoryNotFoundException("dir-message") };
+        yield return new object[] { new FileNotFoundException("file-message") };
+        yield return new object[] { new PathTooLongException("pathtoolong-message") };
+        yield return new object[] { new EndOfStreamException("endofstream-message") };
+        yield return new object[] { new FileLoadException("fileload-message") };
+
+        // ArgumentException subtypes, same inheritance contract.
         yield return new object[] { new ArgumentNullException("p", "argnull-message") };
         yield return new object[] { new ArgumentOutOfRangeException("p", "argoor-message") };
-        yield return new object[] { new PathTooLongException("pathtoolong-message") };
     }
 
     private static FilesController CreateController(FakeFileService service)
@@ -234,45 +249,15 @@ public class FilesControllerTests
         Assert.Equal(string.Empty, fake.UploadDirPath);
     }
 
-    [Fact]
-    public async Task Upload_ReturnsOk200_WithFileName_WhenPathIsEmpty()
-    {
-        var fake = new FakeFileService();
-        var controller = CreateController(fake);
-        var file = FormFileFactory.CreateFormFile("upload.txt", "payload");
-
-        var result = await controller.Upload(string.Empty, file);
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.Equal(StatusCodes.Status200OK, ok.StatusCode);
-        Assert.Equal("upload.txt", GetProperty(ok.Value!, "path"));
-    }
-
-    [Fact]
-    public async Task Upload_ReturnsOk200_WithFileName_WhenPathIsNull()
-    {
-        var fake = new FakeFileService();
-        var controller = CreateController(fake);
-        var file = FormFileFactory.CreateFormFile("upload.txt", "payload");
-
-        var result = await controller.Upload(null, file);
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.Equal("upload.txt", GetProperty(ok.Value!, "path"));
-    }
-
-    [Fact]
-    public async Task Upload_ReturnsOk200_WithJoinedPath_WhenPathProvided()
-    {
-        var fake = new FakeFileService();
-        var controller = CreateController(fake);
-        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
-
-        var result = await controller.Upload("docs", file);
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.Equal("docs/report.txt", GetProperty(ok.Value!, "path"));
-    }
+    // The happy-path "Upload returns 200 echoing the service value" contract is
+    // pinned by the parameterized Upload_ResponsePath_EchoesServiceReturnValue_
+    // VerbatimWithoutNormalization test below (it asserts Status200OK + verbatim
+    // echo across clean and non-canonical service return values). Per-test
+    // variants for empty/null/provided *query* paths add no coverage here because
+    // after the refactor the query path no longer influences the response at all —
+    // it is forwarded to the service verbatim (pinned by
+    // Upload_PassesEmptyString_WhenPathIsNullOrEmpty and
+    // Upload_PassesRawPathToService_EvenWhenNonCanonical).
 
     [Theory]
     [MemberData(nameof(CaughtExceptions))]
@@ -290,148 +275,44 @@ public class FilesControllerTests
     }
 
     // =====================================================================
-    // Upload response path normalization
+    // Upload response path sourcing
     //
-    // The Upload endpoint joins the directory `path` query parameter with the
-    // uploaded file name for its response. A client may pass a non-canonical
-    // path (backslashes, leading/trailing slashes, '.'/'..' segments, repeated
-    // slashes); the response must normalize those into a clean forward-slash
-    // relative path that is consistent with the rest of the API and with the
-    // frontend's normalizeRelativePath (src/format.ts). These tests pin that
-    // contract for already-canonical and non-canonical inputs, and verify the
-    // service still receives the raw query value (only the response is
-    // normalized — the service's own SafeResolve sandboxes the path).
+    // The Upload endpoint's response `path` is the value returned by
+    // IFileService.UploadAsync — the service is the single source of truth for
+    // the stored file's normalized relative path. The controller must echo
+    // that value VERBATIM: it must not re-normalize, strip, backslash-convert,
+    // or otherwise mutate the service's return value (the previous
+    // controller-side NormalizeRelativePath helper has been removed). These
+    // tests pin the echo contract; the normalization itself is now pinned at
+    // the service layer in FileServiceTests.
     // =====================================================================
 
     [Theory]
-    [InlineData(null, "report.txt")]
-    [InlineData("", "report.txt")]
-    [InlineData("docs", "docs/report.txt")]
-    [InlineData("docs/sub", "docs/sub/report.txt")]
-    [InlineData("a/b/c", "a/b/c/report.txt")]
-    public async Task Upload_ResponsePath_IsAlreadyCanonical_ForCleanInputs(string? path, string expected)
+    [InlineData("docs/report.txt")]
+    [InlineData("a/b/c/report.txt")]
+    [InlineData("report.txt")]
+    [InlineData("docs\\sub\\report.txt")]   // value the OLD controller would have converted to forward slashes
+    [InlineData("/docs/report.txt")]        // value the OLD controller would have leading-trimmed
+    [InlineData("docs//report.txt")]        // value the OLD controller would have collapsed
+    [InlineData("../escape/report.txt")]    // value the OLD controller would have dot-stripped
+    [InlineData("")]                        // the service may legitimately return an empty path
+    public async Task Upload_ResponsePath_EchoesServiceReturnValue_VerbatimWithoutNormalization(string storedPath)
     {
-        // Behavior must be unchanged for inputs that are already canonical.
-        var fake = new FakeFileService();
+        // Whatever the service returns must reach the response body unchanged.
+        // This proves the controller performs NO path normalization of its own;
+        // the service return value is the single source of truth. Had the
+        // controller kept a NormalizeRelativePath step, the backslash / leading
+        // slash / repeated slash / ".." cases below would be rewritten and this
+        // assertion would fail.
+        var fake = new FakeFileService { UploadedPath = storedPath };
         var controller = CreateController(fake);
         var file = FormFileFactory.CreateFormFile("report.txt", "payload");
 
-        var result = await controller.Upload(path, file);
+        var result = await controller.Upload("any/dir", file);
 
         var ok = Assert.IsType<OkObjectResult>(result);
         Assert.Equal(StatusCodes.Status200OK, ok.StatusCode);
-        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
-    }
-
-    [Theory]
-    [InlineData("docs\\sub", "docs/sub/report.txt")]
-    [InlineData("docs\\sub\\deep", "docs/sub/deep/report.txt")]
-    [InlineData("\\docs", "docs/report.txt")]
-    public async Task Upload_ResponsePath_ReplacesBackslashesWithForwardSlashes(string path, string expected)
-    {
-        var fake = new FakeFileService();
-        var controller = CreateController(fake);
-        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
-
-        var result = await controller.Upload(path, file);
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
-    }
-
-    [Theory]
-    [InlineData("/docs", "docs/report.txt")]
-    [InlineData("docs/", "docs/report.txt")]
-    [InlineData("/docs/", "docs/report.txt")]
-    [InlineData("/docs/sub/", "docs/sub/report.txt")]
-    public async Task Upload_ResponsePath_TrimsLeadingAndTrailingSlashes(string path, string expected)
-    {
-        var fake = new FakeFileService();
-        var controller = CreateController(fake);
-        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
-
-        var result = await controller.Upload(path, file);
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
-    }
-
-    [Theory]
-    [InlineData("docs//sub", "docs/sub/report.txt")]
-    [InlineData("docs///sub", "docs/sub/report.txt")]
-    [InlineData("//docs//sub//", "docs/sub/report.txt")]
-    public async Task Upload_ResponsePath_CollapsesRepeatedSlashes(string path, string expected)
-    {
-        var fake = new FakeFileService();
-        var controller = CreateController(fake);
-        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
-
-        var result = await controller.Upload(path, file);
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
-    }
-
-    [Theory]
-    [InlineData("./docs", "docs/report.txt")]
-    [InlineData("docs/./sub", "docs/sub/report.txt")]
-    [InlineData("docs/sub/.", "docs/sub/report.txt")]
-    [InlineData("../docs", "docs/report.txt")]
-    [InlineData("docs/../sub", "docs/sub/report.txt")]
-    public async Task Upload_ResponsePath_DropsDotAndDotDotSegments(string path, string expected)
-    {
-        // '.' and '..' are filtered out (NOT resolved against the parent),
-        // matching the frontend's normalizeRelativePath semantics.
-        var fake = new FakeFileService();
-        var controller = CreateController(fake);
-        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
-
-        var result = await controller.Upload(path, file);
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
-    }
-
-    [Theory]
-    [InlineData(".", "report.txt")]
-    [InlineData("..", "report.txt")]
-    [InlineData("/", "report.txt")]
-    [InlineData("\\", "report.txt")]
-    [InlineData("///", "report.txt")]
-    [InlineData("./", "report.txt")]
-    [InlineData("../..", "report.txt")]
-    [InlineData("/./../", "report.txt")]
-    public async Task Upload_ResponsePath_ReturnsJustFileName_WhenPathNormalizesToEmpty(string path, string expected)
-    {
-        // When the directory path collapses to nothing after normalization, the
-        // response must be just the file name (same shape as a null/empty path).
-        var fake = new FakeFileService();
-        var controller = CreateController(fake);
-        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
-
-        var result = await controller.Upload(path, file);
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
-    }
-
-    [Fact]
-    public async Task Upload_ResponsePath_NormalizesAllRulesAtOnce_ForMixedInput()
-    {
-        // Exercises every rule simultaneously: backslash, leading slash,
-        // trailing slash, repeated slash, '.' and '..' segments.
-        var fake = new FakeFileService();
-        var controller = CreateController(fake);
-        var file = FormFileFactory.CreateFormFile("report.txt", "payload");
-
-        var result = await controller.Upload("/./docs\\..//sub/", file);
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.Equal(StatusCodes.Status200OK, ok.StatusCode);
-        // '/./docs\..//sub/' -> replace '\' -> '/./docs/..//sub/' ->
-        // split -> ['', '.', 'docs', '..', '', 'sub', ''] ->
-        // filter -> ['docs', 'sub'] -> join -> 'docs/sub'
-        Assert.Equal("docs/sub/report.txt", GetProperty(ok.Value!, "path"));
+        Assert.Equal(storedPath, GetProperty(ok.Value!, "path"));
     }
 
     [Theory]
@@ -442,9 +323,10 @@ public class FilesControllerTests
     [InlineData("//docs//sub//")]
     public async Task Upload_PassesRawPathToService_EvenWhenNonCanonical(string path)
     {
-        // The service call must NOT be normalized: it still receives the raw
-        // query value so its own SafeResolve can sandbox the path. Only the
-        // HTTP response is normalized.
+        // The service call must NOT be normalized at the controller layer: it
+        // still receives the raw query value so its own SafeResolve can sandbox
+        // the path. (The response path is sourced from the service's return
+        // value, never reconstructed/normalized by the controller.)
         var fake = new FakeFileService();
         var controller = CreateController(fake);
         var file = FormFileFactory.CreateFormFile("report.txt", "payload");
@@ -452,27 +334,6 @@ public class FilesControllerTests
         await controller.Upload(path, file);
 
         Assert.Equal(path, fake.UploadDirPath);
-    }
-
-    [Theory]
-    [InlineData("../report.txt", "report.txt")]      // traversal stripped to last segment
-    [InlineData("../../report.txt", "report.txt")]
-    [InlineData("/report.txt", "report.txt")]
-    public async Task Upload_ResponsePath_StripsTraversalFromFileName(string fileName, string expected)
-    {
-        // The response must reflect the safe final segment the service stores,
-        // not the raw (possibly traversal-laden) file name submitted by the
-        // client. The service itself stores only that segment; the response is
-        // normalized to match.
-        var fake = new FakeFileService();
-        var controller = CreateController(fake);
-        var file = FormFileFactory.CreateFormFile(fileName, "payload");
-
-        var result = await controller.Upload(string.Empty, file);
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.Equal(StatusCodes.Status200OK, ok.StatusCode);
-        Assert.Equal(expected, GetProperty(ok.Value!, "path"));
     }
 
     // =====================================================================
@@ -605,6 +466,26 @@ public class FilesControllerTests
 
         var physical = Assert.IsType<PhysicalFileResult>(result);
         Assert.Equal("application/octet-stream", physical.ContentType);
+    }
+
+    [Fact]
+    public void Download_UsesOctetStream_WhenFileHasNoExtension()
+    {
+        // A file name with no extension is absent from the content-type map, so
+        // it must fall back to application/octet-stream. This is the one
+        // fallback edge case not covered by the unknown-extension theories
+        // above (all of which pass a file *with* an extension). Pins the
+        // fallback value that the refactor extracts to DefaultContentType.
+        var resolved = Path.Combine(Path.GetTempPath(), "README");
+        var fake = new FakeFileService { ResolvedPath = resolved };
+        var controller = CreateController(fake);
+
+        var result = controller.Download("README");
+
+        var physical = Assert.IsType<PhysicalFileResult>(result);
+        Assert.Equal("application/octet-stream", physical.ContentType);
+        Assert.Equal(resolved, physical.FileName);
+        Assert.Equal("README", physical.FileDownloadName);
     }
 
     [Fact]
@@ -1004,11 +885,11 @@ public class FilesControllerTests
     [MemberData(nameof(CaughtExceptions))]
     public void BadRequest_AlwaysReturns400_RegardlessOfCaughtExceptionType(Exception ex)
     {
-        // Every caught exception type — the five declared names AND their
-        // subtypes — must map to the *same* 400 status. None should leak
-        // through as 500 or pick up a different code. Exercises the catch
-        // list uniformly through one endpoint to pin the shared status-code
-        // contract of the shared helper.
+        // Every caught exception type — the three roots AND their subtypes —
+        // must map to the *same* 400 status. None should leak through as 500 or
+        // pick up a different code. Exercises the catch list uniformly through
+        // one endpoint to pin the shared status-code contract of the shared
+        // helper.
         var fake = new FakeFileService { DeleteException = ex };
         var controller = CreateController(fake);
 
@@ -1017,6 +898,115 @@ public class FilesControllerTests
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
         Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+    }
+
+    // =====================================================================
+    // Exception-translation consolidation contract.
+    //
+    // Execute (sync) and ExecuteAsync (async) translate exactly three "root"
+    // exception types into a 400 — ArgumentException, UnauthorizedAccessException
+    // and IOException — and let every other type propagate. The former explicit
+    // DirectoryNotFound/FileNotFound catches are redundant (both are IOException
+    // subtypes); a single IOException branch handles them by inheritance. The
+    // tests below pin the inheritance contract for non-BCL derived types, the
+    // precise catch-list boundary (no widening), and parity between the sync
+    // and async code paths once they are folded onto one shared translator.
+    // =====================================================================
+
+    [Theory]
+    [MemberData(nameof(CustomTranslatedSubclasses))]
+    public void Translate_CatchesNonBclSubclasses_ByInheritance(Exception ex)
+    {
+        // The translation branches must match by inheritance (is-a), not by
+        // exact runtime type: a non-BCL exception derived from IOException or
+        // ArgumentException must still resolve to 400. Exact-type matching
+        // (`ex.GetType() == typeof(IOException)`) would let these propagate.
+        var fake = new FakeFileService { DeleteException = ex };
+        var controller = CreateController(fake);
+
+        var result = controller.Delete("any");
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
+    }
+
+    public static IEnumerable<object[]> CustomTranslatedSubclasses()
+    {
+        yield return new object[] { new CustomIOException("custom-io") };
+        yield return new object[] { new CustomArgumentException("custom-arg") };
+    }
+
+    [Theory]
+    [MemberData(nameof(NonTranslatedExceptions))]
+    public void Translate_PropagatesExceptionsOutsideTheTranslatedRoots(Exception ex)
+    {
+        // The catch list must stay exactly { ArgumentException,
+        // UnauthorizedAccessException, IOException }. Widening it — e.g. a stray
+        // `catch (Exception ...)` that forgets to re-throw, or catching a common
+        // base like SystemException — would silently turn these into 400s and
+        // hide real faults. Each must surface as the exact same instance thrown
+        // by the service, unwrapped (no TargetInvocation/Aggregate wrapping).
+        var fake = new FakeFileService { DeleteException = ex };
+        var controller = CreateController(fake);
+
+        var thrown = Record.Exception(() => controller.Delete("any"));
+
+        Assert.Same(ex, thrown);
+    }
+
+    public static IEnumerable<object[]> NonTranslatedExceptions()
+    {
+        // Siblings of the translated roots under SystemException, plus other
+        // common runtime faults and a plain Exception subclass — none of these
+        // is assignable to ArgumentException, UnauthorizedAccessException or
+        // IOException, so all must propagate.
+        yield return new object[] { new NotImplementedException("not-impl") };
+        yield return new object[] { new TimeoutException("timeout") };
+        yield return new object[] { new NullReferenceException("nre") };
+        yield return new object[] { new FormatException("fmt") };
+        yield return new object[] { new KeyNotFoundException("key") };
+        yield return new object[] { new DivideByZeroException("dbz") };
+        yield return new object[] { new IndexOutOfRangeException("ior") };
+        yield return new object[] { new NotSupportedException("nse") };
+        yield return new object[] { new CustomException("custom-untranslated") };
+    }
+
+    [Theory]
+    [MemberData(nameof(TranslatedRoots))]
+    public async Task SyncAndAsyncHelpers_TranslateTheSameExceptionIdentically(Exception ex)
+    {
+        // After the refactor Execute (sync) and ExecuteAsync (async) share one
+        // TranslateException method. This pins that the two paths agree on
+        // status code and message for every translated root AND a representative
+        // subtype of each root (so inherited types translate identically too,
+        // not just the named roots). A divergence here would mean the two
+        // former catch blocks were not actually unified.
+        var syncController = CreateController(new FakeFileService { DeleteException = ex });
+        var asyncController = CreateController(new FakeFileService { UploadException = ex });
+
+        var syncResult = syncController.Delete("any");
+        var asyncResult = await asyncController.Upload(
+            "any", FormFileFactory.CreateFormFile("f.txt", "x"));
+
+        var syncBad = Assert.IsType<BadRequestObjectResult>(syncResult);
+        var asyncBad = Assert.IsType<BadRequestObjectResult>(asyncResult);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, syncBad.StatusCode);
+        Assert.Equal(StatusCodes.Status400BadRequest, asyncBad.StatusCode);
+        Assert.Equal(ex.Message, GetProperty(syncBad.Value!, "error"));
+        Assert.Equal(ex.Message, GetProperty(asyncBad.Value!, "error"));
+    }
+
+    public static IEnumerable<object[]> TranslatedRoots()
+    {
+        // One case per translated root, plus one representative subtype each,
+        // so the sync/async parity check covers inherited types as well.
+        yield return new object[] { new ArgumentException("arg") };
+        yield return new object[] { new UnauthorizedAccessException("unauth") };
+        yield return new object[] { new IOException("io") };
+        yield return new object[] { new ArgumentNullException("p", "argnull") };
+        yield return new object[] { new PathTooLongException("ptl") };
     }
 
     // =====================================================================
@@ -1087,7 +1077,8 @@ public class FilesControllerTests
     [Fact]
     public async Task Upload_PathPayload_HasExactlyOneStringPropertyNamedPath()
     {
-        var fake = new FakeFileService();
+        // The path value is whatever the service returned, echoed unchanged.
+        var fake = new FakeFileService { UploadedPath = "docs/report.txt" };
         var controller = CreateController(fake);
         var file = FormFileFactory.CreateFormFile("report.txt", "payload");
 
@@ -1231,15 +1222,37 @@ public class FilesControllerTests
             return Path.Combine(Path.GetTempPath(), "resolved.txt");
         }
 
-        public Task UploadAsync(string relativeDirPath, IFormFile file)
+        public Task<string> UploadAsync(string relativeDirPath, IFormFile file)
         {
             UploadCalls++;
-            return Task.CompletedTask;
+            return Task.FromResult(string.Empty);
         }
 
         public void Delete(string relativePath) => DeleteCalls++;
         public void Move(MoveRequest request) => MoveCalls++;
         public void Copy(CopyRequest request) => CopyCalls++;
         public void CreateDirectory(string relativePath) => CreateDirectoryCalls++;
+    }
+
+    // =====================================================================
+    // Non-BCL exception subclasses used to prove the translation branches match
+    // by inheritance (is-a) rather than by exact runtime type. CustomIOException
+    // / CustomArgumentException MUST be caught (they derive from a translated
+    // root); CustomException MUST propagate (it derives from plain Exception).
+    // =====================================================================
+
+    private sealed class CustomIOException : IOException
+    {
+        public CustomIOException(string message) : base(message) { }
+    }
+
+    private sealed class CustomArgumentException : ArgumentException
+    {
+        public CustomArgumentException(string message) : base(message) { }
+    }
+
+    private sealed class CustomException : Exception
+    {
+        public CustomException(string message) : base(message) { }
     }
 }

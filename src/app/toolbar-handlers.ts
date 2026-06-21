@@ -49,9 +49,13 @@ export function clearSearch(): void {
  * Uses a self-contained, transient `<input type="file" multiple>` appended
  * hidden to body, clicked (within the menu-item click's user gesture so the
  * picker is allowed to open), awaited until either `change` (files chosen) or
- * `cancel` (dismissed), then removed — so a cancel resolves cleanly with no
- * upload and no leak. Each file is uploaded in order; per-file failures are
- * collected and surfaced in the status footer without aborting the rest.
+ * `cancel` (dismissed) settles, then removed — so a cancel resolves cleanly
+ * with no upload and no leak. Because `cancel` is non-standard and not fired
+ * by every browser, a `window` `focus` event (fired when the dialog closes and
+ * focus returns) is also used as a fallback settle signal, deferred briefly so
+ * a real `change` with chosen files wins first. Each file is uploaded in
+ * order; per-file failures are collected and surfaced in the status footer
+ * without aborting the rest.
  */
 export async function pickAndUploadInto(dirPath: string): Promise<void> {
   const input = document.createElement('input');
@@ -61,12 +65,27 @@ export async function pickAndUploadInto(dirPath: string): Promise<void> {
   document.body.append(input);
 
   const files = await new Promise<File[]>((resolve) => {
+    // Grace window (ms) letting a real `change` (with files) win over the
+    // focus fallback so genuine selections are never swallowed.
+    const FOCUS_SETTLE_DELAY_MS = 100;
     let settled = false;
+    const onFocus = (): void => {
+      // Defer slightly so a real `change` arriving after focus can settle
+      // with the chosen files first; the `settled` guard then makes the
+      // later timeout a no-op. Files are read at fire time, not schedule
+      // time, so a selection made before the delay elapses is honoured.
+      setTimeout(
+        () => finish(input.files && input.files.length > 0 ? Array.from(input.files) : []),
+        FOCUS_SETTLE_DELAY_MS,
+      );
+    };
     const finish = (list: File[]): void => {
       if (settled) {
         return;
       }
       settled = true;
+      // Drop the fallback listener so it cannot outlive the picker.
+      window.removeEventListener('focus', onFocus);
       resolve(list);
     };
     input.addEventListener('change', () => {
@@ -75,6 +94,11 @@ export async function pickAndUploadInto(dirPath: string): Promise<void> {
     // `cancel` fires when the user dismisses the picker without choosing —
     // resolve with an empty list so the input is removed and no upload runs.
     input.addEventListener('cancel', () => finish([]));
+    // `cancel` is non-standard: some browsers/webviews never fire it, so a
+    // dismissed picker would otherwise leave this promise pending and the
+    // transient <input> leaked. The window regaining focus (dialog closed)
+    // is the fallback settle signal.
+    window.addEventListener('focus', onFocus);
     input.click();
   });
   input.remove();

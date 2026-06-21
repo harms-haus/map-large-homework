@@ -1,10 +1,11 @@
 /**
  * Shared services for the file-browser app modules.
  *
- * The file-browser is split across several focused modules (dom-builders,
- * render-browse, render-search, toolbar-handlers, render-orchestrator). They
- * all need access to three cross-cutting things that `startApp` establishes
- * once per mount:
+ * The file-browser is split across several focused modules (menus, rows,
+ * breadcrumb, icons, tables — re-exported as a group via the dom-builders
+ * barrel — plus render-browse, render-search, toolbar-handlers, and
+ * render-orchestrator). They all need access to three cross-cutting things
+ * that `startApp` establishes once per mount:
  *
  *   - the {@link ApiClient} singleton (used for fetches and download URLs);
  *   - the DOM element refs the render helpers write into (results, status,
@@ -12,15 +13,15 @@
  *   - a "render hook" that action-button handlers and the upload handler call
  *     to trigger a fresh route dispatch (used instead of importing the
  *     orchestrator directly, which would create a module cycle: orchestrator →
- *     render-browse → dom-builders → orchestrator).
+ *     render-browse → rows → menus → icons → context → orchestrator).
  *
  * Centralizing them here keeps the cross-module dependency graph acyclic and
- * makes the re-bind-on-remount contract explicit — replacing the bare
- * module-level `let resultsEl!: HTMLElement` variables that used to live in
- * `app.ts`. `render-orchestrator.init` re-binds the refs every mount, so the
+ * makes the re-bind-on-remount contract explicit: the module-level element
+ * refs are rebound by `render-orchestrator.init` on every mount, so the
  * render helpers always target the most recently mounted app.
  */
 import { ApiClient } from '../api.js';
+import type { MenuState } from './menus.js';
 
 /** The DOM element refs established by each `startApp` mount. */
 export interface DomRefs {
@@ -33,8 +34,7 @@ export interface DomRefs {
 /* -------------------------------------------------------------------------
  * API singleton
  *
- * Created once at module load, exactly as the original `app.ts` created
- * `const api = new ApiClient();` at its top level. The constructor performs
+ * Created once at module load. The constructor performs
  * no I/O, so creating it before `fetch` is stubbed in a test is safe.
  * ---------------------------------------------------------------------- */
 const api = new ApiClient();
@@ -48,9 +48,9 @@ export function getApi(): ApiClient {
  * DOM refs — rebound by `render-orchestrator.init` on every `startApp` mount
  * so `renderBrowse` / `renderSearch` always target the most recent mount.
  *
- * The definite-assignment assertions mirror the original `let resultsEl!:
- * HTMLElement` pattern: the refs are uninitialized only until the first
- * `init()` call, which always runs before any render helper reads them.
+ * The definite-assignment assertions guarantee the refs are uninitialized only
+ * until the first `init()` call, which always runs before any render helper
+ * reads them.
  * ---------------------------------------------------------------------- */
 let results!: HTMLElement;
 let status!: HTMLElement;
@@ -82,9 +82,32 @@ export function getSearchInput(): HTMLInputElement {
 }
 
 /* -------------------------------------------------------------------------
+ * Menu state — rebound by `render-orchestrator.init` on every `startApp` mount
+ *
+ * The per-mount menu open/close state (created by `createMenuState` in
+ * menus.js) so the row/directory menu single-open invariant is scoped to the
+ * current mount, not a module-level singleton that would cross-contaminate
+ * re-mounts. The `MenuState` type is imported TYPE-ONLY here (erased at build
+ * time) so this does not introduce a runtime cycle with menus.js / icons.js,
+ * which import these accessors at runtime.
+ * ---------------------------------------------------------------------- */
+let menuState!: MenuState;
+
+/** Bind the per-mount menu state. Called from the orchestrator's `init`. */
+export function setMenuState(state: MenuState): void {
+  menuState = state;
+}
+
+/** The per-mount menu open/close state (row + directory menus). */
+export function getMenuState(): MenuState {
+  return menuState;
+}
+
+/* -------------------------------------------------------------------------
  * Render hook
  *
- * Action-button handlers (in dom-builders) and the upload handler (in
+ * Action-button handlers (the menu items built in menus.js via the
+ * action-button wrapper in icons.js) and the upload handler (in
  * toolbar-handlers) call `rerender()` to trigger a fresh route dispatch. They
  * cannot import `render` from render-orchestrator.ts directly without creating
  * the cycle noted above, so the orchestrator registers its `render` function

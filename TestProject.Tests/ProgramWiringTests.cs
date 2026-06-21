@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text.RegularExpressions;
+using TestProject.Tests.TestHelpers;
 using Xunit;
 
 namespace TestProject.Tests;
@@ -36,8 +37,23 @@ public class ProgramWiringTests
     private const string OptionsConfigurePattern =
         @"Services\s*\.\s*Configure\s*<[^>]*FileServiceOptions[^>]*>";
 
-    private const string FileServiceSectionPattern =
-        @"GetSection\s*\(\s*""FileService""\s*\)";
+    /// <summary>
+    /// Matches any <c>GetSection(...)</c> call in Program.cs, capturing the raw
+    /// argument text. This is deliberately value-agnostic so the wiring test
+    /// survives extracting the section-name literal into a named constant (e.g.
+    /// <c>GetSection(FileServiceOptions.SectionName)</c>); the effective value
+    /// is resolved separately by <see cref="ResolveSectionName"/>.
+    /// </summary>
+    private const string AnyGetSectionPattern =
+        @"GetSection\s*\(\s*([^)]+?)\s*\)";
+
+    /// <summary>
+    /// The source of <c>Configuration/FileServiceOptions.cs</c>, used to resolve
+    /// the value of a section-name constant the refactor may move onto the
+    /// options class (e.g. <c>public const string SectionName = "FileService"</c>).
+    /// </summary>
+    private static readonly string FileServiceOptionsSource =
+        SourceFileLoader.LoadAdjacent("Configuration", "FileServiceOptions.cs");
 
     private const string SingletonPattern =
         @"Services\s*\.\s*AddSingleton\s*<[^>]*IFileService[^>]*,\s*[^>]*FileService\s*>";
@@ -92,6 +108,47 @@ public class ProgramWiringTests
     private static int Count(string pattern) =>
         Regex.Matches(ProgramSource, pattern).Count;
 
+    /// <summary>
+    /// Resolves the effective configuration section name passed to
+    /// <c>GetSection</c> in Program.cs. Handles the inline literal form
+    /// (<c>GetSection("FileService")</c>) and the extracted-constant form
+    /// (<c>GetSection(SomeOptions.SectionName)</c> or a local const), so the
+    /// wiring characterization survives the magic-value extraction while still
+    /// pinning the value to <c>"FileService"</c>.
+    /// </summary>
+    private static string ResolveSectionName()
+    {
+        var match = Regex.Match(ProgramSource, AnyGetSectionPattern);
+        Assert.True(match.Success, "Expected a GetSection(...) call in Program.cs.");
+        var arg = match.Groups[1].Value.Trim();
+
+        // Inline string literal, e.g. GetSection("FileService").
+        var literal = Regex.Match(arg, "^\"([^\"]*)\"$");
+        if (literal.Success)
+        {
+            return literal.Groups[1].Value;
+        }
+
+        // Constant reference, e.g. GetSection(FileServiceOptions.SectionName) or
+        // GetSection(FileServiceSectionName). Resolve the declared value from
+        // Program.cs or FileServiceOptions.cs source.
+        var constName = arg.Split('.')[^1].Trim();
+        foreach (var source in new[] { ProgramSource, FileServiceOptionsSource })
+        {
+            var decl = Regex.Match(
+                source,
+                @"const\s+string\s+" + Regex.Escape(constName) + @"\s*=\s*""([^""]*)""");
+            if (decl.Success)
+            {
+                return decl.Groups[1].Value;
+            }
+        }
+
+        // Unresolved (non-literal/non-const expression): return the raw text so
+        // the Equal("FileService") assertion fails with a clear diff.
+        return arg;
+    }
+
     private static void AssertPresent(string pattern, string description)
     {
         Assert.True(IndexOf(pattern) >= 0,
@@ -124,19 +181,24 @@ public class ProgramWiringTests
     public void Program_Registers_FileServiceOptions_FromFileServiceSection()
     {
         var configureIdx = IndexOf(OptionsConfigurePattern);
-        var sectionIdx = IndexOf(FileServiceSectionPattern);
+        var sectionIdx = IndexOf(AnyGetSectionPattern);
 
         Assert.True(sectionIdx >= 0,
-            "Expected builder.Configuration.GetSection(\"FileService\") in Program.cs.");
+            "Expected builder.Configuration.GetSection(...) in Program.cs.");
 
         // The section should be supplied to the Configure call (i.e. it appears
         // right after the Configure<FileServiceOptions> token).
         Assert.True(configureIdx >= 0 && sectionIdx > configureIdx,
-            "GetSection(\"FileService\") should be the argument passed to " +
+            "GetSection(...) should be the argument passed to " +
             "Configure<FileServiceOptions>.");
         Assert.True(sectionIdx - configureIdx < 250,
-            "GetSection(\"FileService\") should be supplied directly to the " +
+            "GetSection(...) should be supplied directly to the " +
             "Configure<FileServiceOptions>(...) call.");
+
+        // The effective section name must be "FileService" whether it is written
+        // inline as a literal or via a named constant. Extracting the magic
+        // value to a const must not change which section is bound.
+        Assert.Equal("FileService", ResolveSectionName());
     }
 
     [Fact]

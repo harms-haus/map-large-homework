@@ -2,7 +2,8 @@
  * Tests for the search-wrapper DOM restructuring and event rewiring that
  * `src/app.ts`'s `startApp` performs:
  *
- *   - The legacy "Search" `<button>` is removed entirely.
+ *   - There is no standalone "Search" `<button>`; search fires automatically
+ *     via debounced `input` events.
  *   - A `.search-wrapper` div wraps the search `<input>`, a leading search
  *     icon (`bi bi-search search-icon`), and a trailing clear button
  *     (`.clear-btn` containing a `bi bi-x-lg` icon).
@@ -56,9 +57,8 @@ beforeEach(() => {
  * Build a fresh app and resolve the search-wrapper sub-elements directly from
  * the rendered DOM.
  *
- * `test-helpers.ts`'s `SetupCtx` now exposes `searchWrapper` /
- * `searchClearBtn` / `searchIcon` (the legacy standalone `searchBtn` field was
- * removed once the search button was dropped from the DOM). This local helper
+ * `test-helpers.ts`'s `SetupCtx` exposes `searchWrapper` /
+ * `searchClearBtn` / `searchIcon`. This local helper
  * keeps resolving those nodes plus the `.toolbar` handle per-test so the
  * assertions here stay coupled to the rendered DOM rather than to the shared
  * context's field set.
@@ -76,7 +76,7 @@ function setupSearchWrapper(options: { hash?: string } = {}) {
  * Structure: the "Search" button is gone; a .search-wrapper holds the icons
  * ========================================================================= */
 describe('startApp search area structure', () => {
-  describe('the legacy "Search" button is removed', () => {
+  describe('no standalone "Search" button', () => {
     it('renders no button whose trimmed text content is "Search"', () => {
       const { root } = setup();
       const searchButtons = Array.from(root.querySelectorAll('button')).filter(
@@ -85,9 +85,9 @@ describe('startApp search area structure', () => {
       expect(searchButtons).toHaveLength(0);
     });
 
-    it('the toolbar has no .btn elements (the upload label was removed)', () => {
-      // Both the legacy search button and the upload label carried the `btn`
-      // class; with both gone, the toolbar contains no `.btn` elements at all.
+    it('the toolbar has no .btn elements', () => {
+      // The toolbar does not use button-style controls; it contains no
+      // `.btn` elements.
       const { toolbar } = setupSearchWrapper();
       const btns = Array.from(toolbar.querySelectorAll('.btn'));
       expect(btns).toHaveLength(0);

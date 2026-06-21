@@ -2,7 +2,7 @@
  * Pure formatting helpers for the file browser UI.
  *
  * Every function in this module is side-effect free (no DOM access, no network)
- * so each can be unit-tested in isolation. The module exports ONLY the six
+ * so each can be unit-tested in isolation. The module exports ONLY the four
  * functions declared here.
  */
 
@@ -62,26 +62,6 @@ export function normalizeRelativePath(path: string): string {
  */
 export function joinPath(base: string, name: string): string {
   return normalizeRelativePath(`${base}/${name}`);
-}
-
-/**
- * Return the normalized parent relative path, or `""` when the path is already
- * at root (empty or a single segment after normalization).
- */
-export function parentPath(path: string): string {
-  const normalized = normalizeRelativePath(path);
-  const lastSlash = normalized.lastIndexOf('/');
-  return lastSlash === -1 ? '' : normalized.slice(0, lastSlash);
-}
-
-/**
- * Return the last segment of a normalized path. Returns `""` for an empty
- * path.
- */
-export function basename(path: string): string {
-  const normalized = normalizeRelativePath(path);
-  const lastSlash = normalized.lastIndexOf('/');
-  return lastSlash === -1 ? normalized : normalized.slice(lastSlash + 1);
 }
 
 /** Left-pad a number to two digits with a leading zero. */

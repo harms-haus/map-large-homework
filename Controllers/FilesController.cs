@@ -11,8 +11,7 @@ namespace TestProject.Controllers;
 /// <c>/api/files</c> and delegates its work to <see cref="Execute"/> (or
 /// <see cref="ExecuteAsync"/> for the async <see cref="Upload"/> endpoint),
 /// which translates the well-known file system faults
-/// (<see cref="ArgumentException"/>, <see cref="UnauthorizedAccessException"/>,
-/// <see cref="DirectoryNotFoundException"/>, <see cref="FileNotFoundException"/>
+/// (<see cref="ArgumentException"/>, <see cref="UnauthorizedAccessException"/>
 /// and <see cref="IOException"/>) into a <c>400 Bad Request</c> carrying the
 /// exception message, leaving any other exception type to propagate.
 /// </summary>
@@ -22,6 +21,9 @@ public class FilesController : ControllerBase
 {
     private readonly IFileService _service;
     private static readonly FileExtensionContentTypeProvider ContentTypeProvider = new();
+
+    /// <summary>Fallback MIME type used when the file extension cannot be resolved.</summary>
+    private const string DefaultContentType = "application/octet-stream";
 
     /// <summary>
     /// Creates a new <see cref="FilesController"/> bound to the supplied
@@ -65,23 +67,15 @@ public class FilesController : ControllerBase
     /// <summary>
     /// Writes the uploaded <paramref name="file"/> into the directory at
     /// <paramref name="path"/> (the root when omitted or empty), creating it
-    /// if necessary. The response reports the joined relative path of the
-    /// stored file.
+    /// if necessary. The response reports the stored file's normalized
+    /// relative path, sourced directly from the service.
     /// </summary>
     [HttpPost("upload")]
     public async Task<IActionResult> Upload([FromQuery] string? path, [FromForm] IFormFile file)
         => await ExecuteAsync(async () =>
         {
-            await _service.UploadAsync(path ?? string.Empty, file);
-            var dir = NormalizeRelativePath(path ?? string.Empty);
-            // The file name is normalized too: the service stores only the
-            // safe final segment (see FileService.UploadAsync), so the
-            // response must reflect that same segment rather than echo back
-            // the raw — possibly path-like or traversal-laden — input.
-            var fileName = NormalizeRelativePath(file.FileName);
-            var resultPath = string.Join('/',
-                new[] { dir, fileName }.Where(s => s.Length > 0));
-            return Ok(new { path = resultPath });
+            var storedPath = await _service.UploadAsync(path ?? string.Empty, file);
+            return Ok(new { path = storedPath });
         });
 
     // =====================================================================
@@ -91,7 +85,7 @@ public class FilesController : ControllerBase
     /// <summary>
     /// Streams the file at <paramref name="path"/> as a physical file
     /// response, deriving the content type from the extension (defaulting to
-    /// <c>application/octet-stream</c> when unknown).
+    /// <see cref="DefaultContentType"/> when unknown).
     /// </summary>
     [HttpGet("download")]
     public IActionResult Download([FromQuery] string path)
@@ -100,7 +94,7 @@ public class FilesController : ControllerBase
             var full = _service.ResolveFullPath(path);
             var contentType = ContentTypeProvider.TryGetContentType(full, out var ct)
                 ? ct
-                : "application/octet-stream";
+                : DefaultContentType;
             return PhysicalFile(full, contentType, Path.GetFileName(full));
         });
 
@@ -176,11 +170,9 @@ public class FilesController : ControllerBase
 
     /// <summary>
     /// Runs <paramref name="body"/> and translates the well-known file system
-    /// faults (<see cref="ArgumentException"/>,
-    /// <see cref="UnauthorizedAccessException"/>,
-    /// <see cref="DirectoryNotFoundException"/>, <see cref="FileNotFoundException"/>
-    /// and <see cref="IOException"/>) into a <c>400 Bad Request</c> carrying
-    /// the exception message. Any other exception type propagates unchanged.
+    /// faults via <see cref="TranslateException"/> into a
+    /// <c>400 Bad Request</c> carrying the exception message. Any other
+    /// exception type propagates unchanged.
     /// </summary>
     /// <remarks>
     /// The return type is <see cref="ActionResult"/> (rather than
@@ -197,35 +189,19 @@ public class FilesController : ControllerBase
         {
             return body();
         }
-        catch (ArgumentException ex)
+        catch (Exception ex)
         {
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (DirectoryNotFoundException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (FileNotFoundException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (IOException ex)
-        {
-            return BadRequest(new { error = ex.Message });
+            return TranslateException(ex);
         }
     }
 
     /// <summary>
     /// Async variant of <see cref="Execute"/> for endpoints that must await
-    /// service calls (currently <see cref="Upload"/>). Same catch list and
-    /// translation; non-translated exceptions propagate. The body is awaited
-    /// (never unwrapped via <c>.Result</c>/<c>.Wait()</c>) so a faulting body
-    /// surfaces its original exception rather than an
-    /// <see cref="AggregateException"/>.
+    /// service calls (currently <see cref="Upload"/>). Shares the same
+    /// <see cref="TranslateException"/> translation; non-translated exceptions
+    /// propagate. The body is awaited (never unwrapped via
+    /// <c>.Result</c>/<c>.Wait()</c>) so a faulting body surfaces its original
+    /// exception rather than an <see cref="AggregateException"/>.
     /// </summary>
     private async Task<ActionResult> ExecuteAsync(Func<Task<ActionResult>> body)
     {
@@ -233,42 +209,33 @@ public class FilesController : ControllerBase
         {
             return await body();
         }
-        catch (ArgumentException ex)
+        catch (Exception ex)
         {
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (DirectoryNotFoundException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (FileNotFoundException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (IOException ex)
-        {
-            return BadRequest(new { error = ex.Message });
+            return TranslateException(ex);
         }
     }
 
     /// <summary>
-    /// Normalizes a raw directory path for use in the response: replaces
-    /// backslashes with forward slashes, collapses repeated slashes, and
-    /// removes <c>.</c> and <c>..</c> segments. Returns empty string when
-    /// the path is null, empty, or collapses to nothing.
+    /// Translates the well-known file system faults —
+    /// <see cref="ArgumentException"/>, <see cref="UnauthorizedAccessException"/>
+    /// and <see cref="IOException"/> — into a <c>400 Bad Request</c> carrying
+    /// the exception message. The branch matching is by inheritance (is-a),
+    /// so <see cref="DirectoryNotFoundException"/> and
+    /// <see cref="FileNotFoundException"/> (both <see cref="IOException"/>
+    /// subtypes) are handled by the single <see cref="IOException"/> branch
+    /// without needing to be enumerated explicitly. Any exception that is not
+    /// assignable to one of these three roots is re-thrown unchanged so it can
+    /// propagate to the caller.
     /// </summary>
-    private static string NormalizeRelativePath(string raw)
+    /// <remarks>
+    /// Shared by <see cref="Execute"/> and <see cref="ExecuteAsync"/> so the
+    /// sync and async endpoints translate exceptions identically.
+    /// </remarks>
+    private ActionResult TranslateException(Exception ex) => ex switch
     {
-        if (string.IsNullOrEmpty(raw))
-            return string.Empty;
+        ArgumentException or UnauthorizedAccessException or IOException
+            => BadRequest(new { error = ex.Message }),
+        _ => throw ex
+    };
 
-        return string.Join("/",
-            raw.Replace('\\', '/')
-               .Split('/')
-               .Where(s => s.Length > 0 && s != "." && s != ".."));
-    }
 }
