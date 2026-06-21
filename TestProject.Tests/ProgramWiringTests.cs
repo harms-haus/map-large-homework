@@ -155,17 +155,6 @@ public class ProgramWiringTests
             $"Expected {description} to be present in Program.cs.");
     }
 
-    private static void AssertCallOrder(string earlier, string later)
-    {
-        var earlierIdx = CallIndex(earlier);
-        var laterIdx = CallIndex(later);
-
-        Assert.True(earlierIdx >= 0, $"Expected '{earlier}(' in Program.cs.");
-        Assert.True(laterIdx >= 0, $"Expected '{later}(' in Program.cs.");
-        Assert.True(earlierIdx < laterIdx,
-            $"'{earlier}' must appear before '{later}' in the Program.cs pipeline.");
-    }
-
     // =====================================================================
     // Service registration: FileServiceOptions
     // =====================================================================
@@ -293,51 +282,6 @@ public class ProgramWiringTests
     // Pipeline ordering
     // =====================================================================
 
-    [Fact]
-    public void Program_Pipeline_HttpsRedirection_ComesBeforeDefaultFiles()
-    {
-        AssertCallOrder("UseHttpsRedirection", "UseDefaultFiles");
-    }
-
-    [Fact]
-    public void Program_Pipeline_DefaultFiles_ComesBeforeStaticFiles()
-    {
-        // DefaultFiles MUST run before StaticFiles so that requests for "/"
-        // are rewritten to index.html before the static file middleware looks
-        // for them.
-        AssertCallOrder("UseDefaultFiles", "UseStaticFiles");
-    }
-
-    [Fact]
-    public void Program_Pipeline_StaticFiles_ComesBeforeMapControllers()
-    {
-        AssertCallOrder("UseStaticFiles", "MapControllers");
-    }
-
-    [Fact]
-    public void Program_Pipeline_MapControllers_ComesBeforeFallback()
-    {
-        var controllers = CallIndex("MapControllers");
-        var fallback = IndexOf(FallbackIndexHtmlPattern);
-
-        Assert.True(controllers >= 0, "Expected 'MapControllers(' in Program.cs.");
-        Assert.True(fallback >= 0, "Expected MapFallbackToFile(\"index.html\") in Program.cs.");
-        Assert.True(controllers < fallback,
-            "MapControllers must come before MapFallbackToFile so that API routes " +
-            "take precedence over the SPA fallback.");
-    }
-
-    [Fact]
-    public void Program_Pipeline_Fallback_ComesBeforeRun()
-    {
-        var fallback = IndexOf(FallbackIndexHtmlPattern);
-        var run = IndexOf(RunPattern);
-
-        Assert.True(fallback >= 0, "Expected MapFallbackToFile(\"index.html\") in Program.cs.");
-        Assert.True(run >= 0, "Expected app.Run() in Program.cs.");
-        Assert.True(fallback < run,
-            "MapFallbackToFile must be registered before app.Run().");
-    }
 
     [Fact]
     public void Program_Pipeline_Build_ComesBeforeAnyMiddleware()

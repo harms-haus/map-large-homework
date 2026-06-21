@@ -1,7 +1,15 @@
 /**
- * Tests for the toolbar handlers — the search button / Enter-key handler, the
- * clear-search handler, and the upload (change) handler, including the
- * per-file upload error-handling contract.
+ * Tests for the toolbar handlers: the search doSearch() entry points, the
+ * clear-search handler, and the upload handler, including the per-file upload
+ * error-handling contract.
+ *
+ * The core search-area behaviors (debounce fires after 200 ms, the debounce
+ * resets per keystroke, query trimming, Enter submits immediately, Escape
+ * clears + stops propagation, the clear (✕) button resets) are covered in
+ * `./search-wrapper.test.ts`; the `search` describe here keeps only the
+ * toolbar-handler-specific edge cases not covered there (the exact 200 ms
+ * boundary, the empty-query-returns-to-browse branch, and the min-2-char
+ * search guard).
  *
  * Shared fixtures, DOM scaffolding, and the per-test fetch stub come from
  * `./test-helpers`.
@@ -22,52 +30,12 @@ installAppTestLifecycle();
  * ========================================================================= */
 describe('toolbar handlers', () => {
   describe('search', () => {
-    it('navigates to a search hash 200ms after the user types in the input (debounced)', async () => {
-      vi.useFakeTimers();
-      try {
-        const { searchInput } = setup({ hash: toBrowseHash('docs') });
-        vi.advanceTimersByTime(1000); // settle initial render
-
-        searchInput.value = 'hello world';
-        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-
-        // Not yet — debounce hasn't fired
-        expect(window.location.hash).toBe(toBrowseHash('docs'));
-
-        vi.advanceTimersByTime(200);
-        expect(window.location.hash).toBe(toSearchHash('hello world', 'docs'));
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('resets the debounce timer on each keystroke (only fires after 200ms of silence)', async () => {
-      vi.useFakeTimers();
-      try {
-        const { searchInput } = setup({ hash: toBrowseHash('docs') });
-        vi.advanceTimersByTime(1000);
-
-        searchInput.value = 'h';
-        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-        vi.advanceTimersByTime(150); // not enough
-        searchInput.value = 'he';
-        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-        vi.advanceTimersByTime(150); // 150ms since last keystroke, still not enough
-        expect(window.location.hash).toBe(toBrowseHash('docs'));
-
-        vi.advanceTimersByTime(50); // now 200ms since last keystroke
-        expect(window.location.hash).toBe(toSearchHash('he', 'docs'));
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
     it('fires at exactly the 200ms debounce boundary — one ms earlier it does not', async () => {
-      // Pins the exact debounce value (200ms). The two tests above only bound
-      // it to a ~50ms band (150ms = no-fire, 200ms = fire), so a change to the
-      // extracted SEARCH_DEBOUNCE_MS constant anywhere inside (150, 200] —
-      // e.g. 175ms — would slip through unnoticed. Asserting 199ms = no-fire
-      // and 200ms = fire nails the value precisely.
+      // Pins the exact debounce value (200ms). The broader debounce behavior
+      // (fires after 200ms, resets per keystroke) is covered in
+      // search-wrapper.test.ts; this test additionally nails the precise
+      // boundary — 199ms = no-fire, 200ms = fire — which those tests only
+      // bound to a ~50ms band.
       vi.useFakeTimers();
       try {
         const { searchInput } = setup({ hash: toBrowseHash('docs') });
@@ -88,22 +56,6 @@ describe('toolbar handlers', () => {
       }
     });
 
-    it('trims the query before navigating', async () => {
-      vi.useFakeTimers();
-      try {
-        const { searchInput } = setup({ hash: toBrowseHash('docs') });
-        vi.advanceTimersByTime(1000);
-
-        searchInput.value = '   spaced   ';
-        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-        vi.advanceTimersByTime(200);
-
-        expect(window.location.hash).toBe(toSearchHash('spaced', 'docs'));
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
     it('clears the search (returns to browse) when the query becomes empty', async () => {
       vi.useFakeTimers();
       try {
@@ -115,60 +67,6 @@ describe('toolbar handlers', () => {
         vi.advanceTimersByTime(200);
 
         expect(window.location.hash).toBe(toBrowseHash('docs'));
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('clears the search input and navigates to browse when the X (clear) button is clicked', async () => {
-      const { searchInput, searchClearBtn } = setup({ hash: toSearchHash('foo', 'docs') });
-      await flush();
-
-      searchInput.value = 'foo';
-      searchClearBtn.click();
-
-      expect(searchInput.value).toBe('');
-      expect(window.location.hash).toBe(toBrowseHash('docs'));
-    });
-
-    it('clears the search input and navigates to browse when Escape is pressed', async () => {
-      const { searchInput } = setup({ hash: toSearchHash('foo', 'docs') });
-      await flush();
-
-      searchInput.value = 'foo';
-      searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-
-      expect(searchInput.value).toBe('');
-      expect(window.location.hash).toBe(toBrowseHash('docs'));
-    });
-
-    it('Escape key stops propagation (does not close the parent <dialog>)', async () => {
-      const { searchInput } = setup({ hash: toBrowseHash('docs') });
-      await flush();
-
-      const parentEl = searchInput.closest('.file-browser') ?? document.body;
-      parentEl.addEventListener('keydown', () => {
-        // should NOT fire if stopPropagation worked
-      });
-
-      const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
-      const stopSpy = vi.spyOn(event, 'stopPropagation');
-      searchInput.dispatchEvent(event);
-
-      expect(stopSpy).toHaveBeenCalled();
-    });
-
-    it('still navigates immediately when Enter is pressed (bypasses debounce)', async () => {
-      vi.useFakeTimers();
-      try {
-        const { searchInput } = setup({ hash: toBrowseHash('docs') });
-        vi.advanceTimersByTime(1000);
-
-        searchInput.value = 'foo';
-        searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
-
-        // Enter fires immediately, no debounce wait needed
-        expect(window.location.hash).toBe(toSearchHash('foo', 'docs'));
       } finally {
         vi.useRealTimers();
       }

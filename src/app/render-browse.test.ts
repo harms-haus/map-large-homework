@@ -184,7 +184,6 @@ describe('renderBrowse', () => {
       const row = rowByName(results.querySelector('table')!, 'a.txt')!;
       const sizeCell = cellsOf(row)[1];
       expect(sizeCell.textContent?.trim()).toBe(formatBytes(1536));
-      expect(sizeCell.textContent?.trim()).toBe('1.5 KB');
     });
 
     it('shows formatDate(lastModified) for the Modified column', async () => {
@@ -617,7 +616,6 @@ describe('renderBrowse', () => {
         expect(btn.getAttribute('aria-haspopup')).toBe('true');
         // U+22EE VERTICAL ELLIPSIS — three vertical dots.
         expect(btn.textContent?.trim()).toBe('⋮');
-        expect(btn.textContent?.trim()).toBe('\u22EE');
       });
 
       it('the .row-menu is hidden initially and its button has aria-expanded="false"', async () => {

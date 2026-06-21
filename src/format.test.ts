@@ -266,10 +266,6 @@ describe('formatDate', () => {
     expect(formatDate('not-a-date')).toBe('');
   });
 
-  it('returns empty string for arbitrary garbage', () => {
-    expect(formatDate('abc')).toBe('');
-  });
-
   it('does not throw for invalid input', () => {
     expect(() => formatDate('nope')).not.toThrow();
   });

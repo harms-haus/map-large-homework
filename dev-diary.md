@@ -10,3 +10,4 @@ Development Diary
 8. Replaced the search button with icon buttons and instant-search. Search results are now also streamed from the server, with a loading spinner until the stream completes.
 9. Human review found minor issues after the search bar revamp.
 10. Ran the Engin harness orchestrator with the "improve" workflow to clean up the codebase.
+11. Human Review: Clean up useless tests.

@@ -367,23 +367,6 @@ public class FilesControllerTests
         Assert.Equal("some/file.bin", fake.ResolvePath);
     }
 
-    [Fact]
-    public void Download_UsesOctetStream_WhenContentTypeUnknown()
-    {
-        // An extension that is not in the well-known content-type map must
-        // fall back to application/octet-stream.
-        var resolved = Path.Combine(Path.GetTempPath(), "blob.zzzznotmapped");
-        var fake = new FakeFileService { ResolvedPath = resolved };
-        var controller = CreateController(fake);
-
-        var result = controller.Download("blob.zzzznotmapped");
-
-        var physical = Assert.IsType<PhysicalFileResult>(result);
-        Assert.Equal("application/octet-stream", physical.ContentType);
-        Assert.Equal(resolved, physical.FileName);
-        Assert.Equal("blob.zzzznotmapped", physical.FileDownloadName);
-    }
-
     [Theory]
     [MemberData(nameof(CaughtExceptions))]
     public void Download_WhenResolveThrows_ReturnsBadRequest400_WithErrorMessage(Exception ex)
@@ -745,19 +728,6 @@ public class FilesControllerTests
     }
 
     // =====================================================================
-    // A non-translated exception must propagate (not be swallowed as 400).
-    // =====================================================================
-
-    [Fact]
-    public void Controller_DoesNotSwallowUnhandledExceptions()
-    {
-        var fake = new FakeFileService { DeleteException = new InvalidOperationException("boom") };
-        var controller = CreateController(fake);
-
-        Assert.Throws<InvalidOperationException>(() => controller.Delete("any"));
-    }
-
-    // =====================================================================
     // Non-translated exceptions must propagate from EVERY endpoint.
     //
     // The shared Execute/ExecuteAsync helper must not widen the catch list —
@@ -879,25 +849,6 @@ public class FilesControllerTests
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         Assert.Equal(message, GetProperty(badRequest.Value!, "error"));
-    }
-
-    [Theory]
-    [MemberData(nameof(CaughtExceptions))]
-    public void BadRequest_AlwaysReturns400_RegardlessOfCaughtExceptionType(Exception ex)
-    {
-        // Every caught exception type — the three roots AND their subtypes —
-        // must map to the *same* 400 status. None should leak through as 500 or
-        // pick up a different code. Exercises the catch list uniformly through
-        // one endpoint to pin the shared status-code contract of the shared
-        // helper.
-        var fake = new FakeFileService { DeleteException = ex };
-        var controller = CreateController(fake);
-
-        var result = controller.Delete("any");
-
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
-        Assert.Equal(ex.Message, GetProperty(badRequest.Value!, "error"));
     }
 
     // =====================================================================

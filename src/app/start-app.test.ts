@@ -295,7 +295,6 @@ describe('import characterization (KEEP-list behaviors)', () => {
 
       clickNameLink(rowByName(results.querySelector('table')!, 'my folder')!);
 
-      expect(window.location.hash).toBe('#/browse/docs/' + encodeURIComponent('my folder'));
       expect(window.location.hash).toBe(toBrowseHash('docs/my folder'));
     });
   });
@@ -311,9 +310,6 @@ describe('import characterization (KEEP-list behaviors)', () => {
         searchInput.dispatchEvent(new Event('input', { bubbles: true }));
         vi.advanceTimersByTime(200); // fire the debounce
 
-        const expected =
-          '#/search?q=' + encodeURIComponent('a & b=c?') + '&path=' + encodeURIComponent('docs');
-        expect(window.location.hash).toBe(expected);
         expect(window.location.hash).toBe(toSearchHash('a & b=c?', 'docs'));
       } finally {
         vi.useRealTimers();

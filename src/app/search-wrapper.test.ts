@@ -322,18 +322,6 @@ describe('startApp search area events', () => {
 
       expect(stopSpy).toHaveBeenCalled();
     });
-
-    it('clears before stopPropagation order does not matter (both effects occur)', () => {
-      const { searchInput } = setupSearchWrapper({ hash: toSearchHash('bar', 'docs') });
-      searchInput.value = 'bar';
-      const event = new KeyboardEvent('keydown', { key: 'Escape' });
-      vi.spyOn(event, 'stopPropagation');
-
-      searchInput.dispatchEvent(event);
-
-      expect(searchInput.value).toBe('');
-      expect(window.location.hash).toBe(toBrowseHash('docs'));
-    });
   });
 
   describe('clear button click', () => {
