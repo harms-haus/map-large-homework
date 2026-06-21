@@ -55,6 +55,8 @@ Search and copy never follow symbolic links (Linux/macOS) or directory junctions
 
 Search is instant and debounced. As you type in the search box, a query fires ~200 ms after you stop typing — no separate Search button to click. Enter submits the current query immediately. Escape clears the query and returns to browse. When the input has text, a clear (✕) button appears inside it; click it (or clear the input) to reset the query. While a search request is in flight, a spinner is shown in the results area.
 
+Matching is case-insensitive. A plain query matches any name that contains it as a substring. Use `*` (any run of characters) and `?` (exactly one character) as wildcards; a query containing either is matched against the whole name, e.g. `*.pdf` or `report_??`.
+
 ## Deep Linking
 
 The app keeps its current view and location in the URL hash, so any folder listing or search result can be bookmarked or shared as a direct link.

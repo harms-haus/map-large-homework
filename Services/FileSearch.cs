@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using TestProject.Models;
 
 namespace TestProject.Services;
@@ -15,6 +16,8 @@ internal sealed class FileSearch
     /// <summary>Maximum entries a single search may return; traversal stops here.</summary>
     private const int MaxSearchResults = 500;
 
+    private static readonly char[] Wildcards = { '*', '?' };
+
     private readonly HomeRoot _root;
 
     public FileSearch(HomeRoot root)
@@ -24,13 +27,16 @@ internal sealed class FileSearch
 
     /// <summary>
     /// Recursively searches under <paramref name="relativePath"/> for entries
-    /// whose name contains <paramref name="query"/> (case-insensitive), capped
-    /// at <see cref="MaxSearchResults"/> matches.
+    /// whose name matches <paramref name="query"/> (case-insensitive), capped
+    /// at <see cref="MaxSearchResults"/> matches. A plain query matches as a
+    /// substring; one containing <c>*</c> or <c>?</c> is matched as an
+    /// anchored glob.
     /// </summary>
     public SearchResultDto Search(string query, string relativePath)
     {
         var full = _root.SafeResolve(relativePath);
         var relative = _root.ToRelative(full);
+        var matchesName = BuildNameMatcher(query);
 
         var results = new List<FileEntryDto>(MaxSearchResults);
 
@@ -42,7 +48,7 @@ internal sealed class FileSearch
             var current = stack.Pop();
 
             var remainingCapacity = MaxSearchResults - results.Count;
-            var (matches, descendInto) = EnumerateDirectory(current, query, remainingCapacity);
+            var (matches, descendInto) = EnumerateDirectory(current, matchesName, remainingCapacity);
             results.AddRange(matches);
 
             foreach (var dir in descendInto)
@@ -55,8 +61,26 @@ internal sealed class FileSearch
     }
 
     /// <summary>
-    /// Enumerates one directory, returning the entries whose names match
-    /// <paramref name="query"/> and the subdirectories safe to descend into.
+    /// A query without wildcards matches as a case-insensitive substring so
+    /// plain search-as-you-type keeps working. With <c>*</c>/<c>?</c> present
+    /// the whole query is an anchored glob: <c>*</c> spans any characters,
+    /// <c>?</c> exactly one. Built once so the regex is not recompiled per entry.
+    /// </summary>
+    private static Func<string, bool> BuildNameMatcher(string query)
+    {
+        if (query.IndexOfAny(Wildcards) < 0)
+        {
+            return name => name.Contains(query, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var pattern = "^" + Regex.Escape(query).Replace("\\*", ".*").Replace("\\?", ".") + "$";
+        var regex = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return regex.IsMatch;
+    }
+
+    /// <summary>
+    /// Enumerates one directory, returning the entries whose names match via
+    /// <paramref name="matchesName"/> and the subdirectories safe to descend into.
     /// Matches are capped at <paramref name="remainingCapacity"/> so the caller
     /// can append them directly. Reparse points may still be reported as
     /// matches but are never returned for descent. An inaccessible directory
@@ -64,7 +88,7 @@ internal sealed class FileSearch
     /// matches and no descents rather than aborting the whole search.
     /// </summary>
     private (List<FileEntryDto> Matches, List<string> DescendInto) EnumerateDirectory(
-        string current, string query, int remainingCapacity)
+        string current, Func<string, bool> matchesName, int remainingCapacity)
     {
         var matches = new List<FileEntryDto>();
         var descendInto = new List<string>();
@@ -93,7 +117,7 @@ internal sealed class FileSearch
             }
 
             var info = new DirectoryInfo(dir);
-            if (info.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+            if (matchesName(info.Name))
             {
                 matches.Add(FileSystemHelpers.BuildEntry(info, _root));
             }
@@ -113,7 +137,7 @@ internal sealed class FileSearch
             }
 
             var info = new FileInfo(file);
-            if (info.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+            if (matchesName(info.Name))
             {
                 matches.Add(FileSystemHelpers.BuildEntry(info, _root));
             }

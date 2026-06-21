@@ -200,6 +200,28 @@ public class FileServiceCharacterizationTests : IDisposable
         Assert.DoesNotContain(result.Results, r => r.Name == "other.txt");
     }
 
+    /// <summary>
+    /// A query containing <c>*</c>/<c>?</c> switches from substring matching to
+    /// an anchored glob over the whole name: <c>*.pdf</c> matches only names
+    /// ending in <c>.pdf</c>, and <c>?</c> consumes exactly one character.
+    /// </summary>
+    [Fact]
+    public async Task Search_WildcardQuery_MatchesAsAnchoredGlob()
+    {
+        var (service, root) = CreateService();
+        Directory.CreateDirectory(root); // materialize the lazily-created home root
+        await File.WriteAllTextAsync(Path.Combine(root, "report.txt"), "x");
+        await File.WriteAllTextAsync(Path.Combine(root, "report.pdf"), "x");
+        await File.WriteAllTextAsync(Path.Combine(root, "reporting.txt"), "x");
+        await File.WriteAllTextAsync(Path.Combine(root, "report1.txt"), "x");
+
+        var pdf = service.Search("*.pdf", "");
+        Assert.Equal(new[] { "report.pdf" }, pdf.Results.Select(r => r.Name).ToArray());
+
+        var single = service.Search("report?.txt", "");
+        Assert.Equal(new[] { "report1.txt" }, single.Results.Select(r => r.Name).ToArray());
+    }
+
     // =====================================================================
     // UploadAsync (FileNameSanitizer / PrepareUploadedFileName)
     //

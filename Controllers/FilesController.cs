@@ -32,7 +32,8 @@ public class FilesController : ControllerBase
         => Execute(() => Ok(_service.Browse(path ?? string.Empty)));
 
     /// <summary>Recursively searches under <paramref name="path"/> (root when
-    /// empty) for names containing <paramref name="query"/> (case-insensitive).</summary>
+    /// empty) for names matching <paramref name="query"/> (case-insensitive):
+    /// a plain query matches as a substring; <c>*</c>/<c>?</c> are wildcards.</summary>
     [HttpGet("search")]
     public ActionResult<SearchResultDto> Search([FromQuery] string query, [FromQuery] string? path)
         => Execute(() => Ok(_service.Search(query ?? string.Empty, path ?? string.Empty)));

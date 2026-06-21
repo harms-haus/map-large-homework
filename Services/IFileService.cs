@@ -18,7 +18,8 @@ public interface IFileService
 
     /// <summary>
     /// Recursively searches under <paramref name="relativePath"/> for entries
-    /// whose name contains <paramref name="query"/> (case-insensitive).
+    /// whose name matches <paramref name="query"/> (case-insensitive): a plain
+    /// query matches as a substring, while <c>*</c>/<c>?</c> act as wildcards.
     /// </summary>
     SearchResultDto Search(string query, string relativePath);
 
