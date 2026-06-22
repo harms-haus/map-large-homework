@@ -11,3 +11,5 @@ Development Diary
 9. Human review found minor issues after the search bar revamp.
 10. Ran the Engin harness orchestrator with the "improve" workflow to clean up the codebase.
 11. Human Review: Clean up useless tests, verbose comments, shorthand goop, corrected error codes.
+12. Added wildcards for search
+13. Added dedicated dialogs for delete confirmation, moving files, etc.

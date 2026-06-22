@@ -52,6 +52,8 @@ import {
   buttonsByText,
   fetchMock,
   flush,
+  mockConfirmDialog,
+  mockPromptDialog,
   installAppTestLifecycle,
 } from './test-helpers';
 
@@ -497,7 +499,7 @@ describe('action handlers re-render after a successful mutation', () => {
 
     const { results } = await setupCleared();
     renderBrowse(browseResult({ path: 'docs', entries: [FILE] }));
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockConfirmDialog(true);
 
     buttonsByText(actionsOf(results, 'a.txt'), 'Delete')[0].click();
     await flush();
@@ -512,7 +514,7 @@ describe('action handlers re-render after a successful mutation', () => {
   it('Move: calls api.move then re-renders (fetches browse again)', async () => {
     const { results } = await setupCleared();
     renderBrowse(browseResult({ path: 'docs', entries: [FILE] }));
-    vi.spyOn(window, 'prompt').mockReturnValue('docs/archive/a.txt');
+    mockPromptDialog('docs/archive/a.txt');
 
     const browseBefore = fetchMock.mock.calls.filter(([u]) => String(u).includes('/browse')).length;
 
@@ -533,7 +535,7 @@ describe('action handlers re-render after a successful mutation', () => {
   it('Copy: calls api.copy then re-renders (fetches browse again)', async () => {
     const { results } = await setupCleared();
     renderBrowse(browseResult({ path: 'docs', entries: [FILE] }));
-    vi.spyOn(window, 'prompt').mockReturnValue('docs/copy/a.txt');
+    mockPromptDialog('docs/copy/a.txt');
 
     const browseBefore = fetchMock.mock.calls.filter(([u]) => String(u).includes('/browse')).length;
 
@@ -572,7 +574,7 @@ describe('action handlers re-render after a successful mutation', () => {
 
     const { results } = await setupCleared();
     renderBrowse(browseResult({ path: 'docs', entries: [] }));
-    vi.spyOn(window, 'prompt').mockReturnValue('new folder');
+    mockPromptDialog('new folder');
 
     buttonsByText(dirMenuOf(results), 'New directory')[0].click();
     await flush();
@@ -620,7 +622,7 @@ describe('action handlers await rerender() — a failing re-render surfaces in .
     setRenderHook(async () => {
       throw new Error('re-render failed');
     });
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockConfirmDialog(true);
 
     buttonsByText(actionsOf(results, 'a.txt'), 'Delete')[0].click();
     await flush();
@@ -637,7 +639,7 @@ describe('action handlers await rerender() — a failing re-render surfaces in .
     setRenderHook(async () => {
       throw new Error('re-render failed');
     });
-    vi.spyOn(window, 'prompt').mockReturnValue('new folder');
+    mockPromptDialog('new folder');
 
     buttonsByText(dirMenuOf(results), 'New directory')[0].click();
     await flush();

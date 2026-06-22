@@ -47,6 +47,28 @@ export function joinPathHelper(base: string, name: string): string {
 }
 
 /* ===========================================================================
+ * Modal-dialog spies
+ *
+ * The action handlers (Delete / Move / Copy / New directory) now drive modal
+ * `<dialog>`s (`confirmDialog` / `promptDialog`) instead of the blocking
+ * `window.confirm` / `window.prompt`. Handler-level tests stub those out so
+ * they can drive a choice (confirm vs. cancel) without rendering the real
+ * modal; the returned spy exposes `.mock.calls[i][0]` (the options object) so
+ * a test can still assert on the title/message text passed in.
+ * ========================================================================= */
+import * as dialogs from './dialogs';
+
+/** Stub `confirmDialog` to resolve with `value` (true = confirm, false = cancel). */
+export function mockConfirmDialog(value: boolean): ReturnType<typeof vi.spyOn> {
+  return vi.spyOn(dialogs, 'confirmDialog').mockResolvedValue(value);
+}
+
+/** Stub `promptDialog` to resolve with `value` (string = confirmed, null = cancelled). */
+export function mockPromptDialog(value: string | null): ReturnType<typeof vi.spyOn> {
+  return vi.spyOn(dialogs, 'promptDialog').mockResolvedValue(value);
+}
+
+/* ===========================================================================
  * Timing
  * ========================================================================= */
 

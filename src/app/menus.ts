@@ -9,6 +9,7 @@
 import type { FileEntry } from '../api.js';
 import { joinPath, normalizeRelativePath } from '../format.js';
 import { getApi, rerender } from './context.js';
+import { confirmDialog, promptDialog } from './dialogs.js';
 import { makeActionButton, makeIcon } from './icons.js';
 import { pickAndUploadInto } from './toolbar-handlers.js';
 
@@ -205,9 +206,12 @@ function makeDirMenu(
     makeActionButton(
       'New directory',
       async () => {
-        const name = window.prompt('New directory name:', '');
-        // Empty/whitespace names and a cancelled prompt do nothing. joinPath
-        // normalizes the combined path and the service sandboxes it again.
+        const name = await promptDialog({
+          title: 'New directory',
+          message: 'Enter a name for the new directory:',
+          defaultValue: '',
+          confirmLabel: 'Create',
+        });
         if (name === null || name.trim() === '') {
           return;
         }
@@ -300,7 +304,13 @@ export function makeRowMenu(
     makeActionButton(
       'Delete',
       async () => {
-        if (!window.confirm('Delete "' + entry.name + '"?')) {
+        const ok = await confirmDialog({
+          title: 'Delete',
+          message: 'Delete "' + entry.name + '"? This cannot be undone.',
+          confirmLabel: 'Delete',
+          danger: true,
+        });
+        if (!ok) {
           return;
         }
         await getApi().delete(entry.path);
@@ -313,7 +323,12 @@ export function makeRowMenu(
     makeActionButton(
       'Move',
       async () => {
-        const dest = window.prompt('Move to relative destination path:', entry.path);
+        const dest = await promptDialog({
+          title: 'Move / Rename',
+          message: 'New relative path for "' + entry.name + '":',
+          defaultValue: entry.path,
+          confirmLabel: 'Move',
+        });
         if (dest === null) {
           return;
         }
@@ -327,7 +342,12 @@ export function makeRowMenu(
     makeActionButton(
       'Copy',
       async () => {
-        const dest = window.prompt('Copy to relative destination path:', entry.path);
+        const dest = await promptDialog({
+          title: 'Copy',
+          message: 'Relative destination path for the copy:',
+          defaultValue: entry.path,
+          confirmLabel: 'Copy',
+        });
         if (dest === null) {
           return;
         }

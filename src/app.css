@@ -384,3 +384,78 @@ body {
   color: #9a9a9a;
   font-size: 20px;
 }
+
+/* Modal dialogs (confirm / prompt / alert) */
+.app-dialog {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.app-dialog[open] {
+  display: flex;
+}
+.app-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+.app-dialog-box {
+  background: #252526;
+  color: #e6e6e6;
+  border: 1px solid #3c3c3c;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 18px 20px;
+  width: 420px;
+  max-width: 90vw;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.app-dialog-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.app-dialog-message {
+  margin: 0;
+  color: #c4c4c4;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.app-dialog-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #333337;
+  color: #e6e6e6;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  padding: 7px 9px;
+  font-size: 13px;
+  outline: none;
+}
+.app-dialog-input:focus {
+  border-color: #6aa6ff;
+}
+.app-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* Destructive confirm (e.g. Delete): red accent, hover darkens. */
+.btn-danger {
+  background: #b3261e;
+  color: #fff;
+}
+.btn-danger:hover {
+  background: #c5302a;
+}

@@ -20,7 +20,7 @@
  *    (module-level element refs), so every test calls `setup()`/`setupCleared()`
  *    first.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { renderBrowse } from './render-browse';
 import { toBrowseHash } from '../router';
 import { formatBytes, normalizeRelativePath } from '../format';
@@ -38,6 +38,8 @@ import {
   buttonsByText,
   fetchMock,
   ISO_FMT,
+  mockConfirmDialog,
+  mockPromptDialog,
   installAppTestLifecycle,
 } from './test-helpers';
 
@@ -257,12 +259,14 @@ describe('renderBrowse', () => {
       await flush();
       results.innerHTML = '';
       renderBrowse(browseResult({ path: 'docs', entries: [file] }));
-      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const confirmSpy = mockConfirmDialog(true);
 
       buttonsByText(actionsCell(results, 'a.txt'), 'Delete')[0].click();
       await flush();
 
-      expect(confirmSpy).toHaveBeenCalledWith('Delete "a.txt"?');
+      expect(confirmSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Delete "a.txt"? This cannot be undone.' }),
+      );
       const deleteCalls = fetchMock.mock.calls.filter(
         ([u, init]) => String(u).includes('/delete') && (init?.method ?? 'GET') === 'DELETE',
       );
@@ -275,7 +279,7 @@ describe('renderBrowse', () => {
     it('Delete does nothing when the user cancels the confirm', async () => {
       const { results } = await setupCleared();
       renderBrowse(browseResult({ path: 'docs', entries: [file] }));
-      vi.spyOn(window, 'confirm').mockReturnValue(false);
+      mockConfirmDialog(false);
 
       buttonsByText(actionsCell(results, 'a.txt'), 'Delete')[0].click();
       await flush();
@@ -288,7 +292,7 @@ describe('renderBrowse', () => {
       await flush();
       results.innerHTML = '';
       renderBrowse(browseResult({ path: 'docs', entries: [file] }));
-      vi.spyOn(window, 'prompt').mockReturnValue('/docs/archive/a.txt');
+      mockPromptDialog('/docs/archive/a.txt');
 
       buttonsByText(actionsCell(results, 'a.txt'), 'Move')[0].click();
       await flush();
@@ -309,7 +313,7 @@ describe('renderBrowse', () => {
     it('Move does nothing when the user cancels the prompt', async () => {
       const { results } = await setupCleared();
       renderBrowse(browseResult({ path: 'docs', entries: [file] }));
-      vi.spyOn(window, 'prompt').mockReturnValue(null);
+      mockPromptDialog(null);
 
       buttonsByText(actionsCell(results, 'a.txt'), 'Move')[0].click();
       await flush();
@@ -322,7 +326,7 @@ describe('renderBrowse', () => {
       await flush();
       results.innerHTML = '';
       renderBrowse(browseResult({ path: 'docs', entries: [file] }));
-      vi.spyOn(window, 'prompt').mockReturnValue('/docs/copy/a.txt');
+      mockPromptDialog('/docs/copy/a.txt');
 
       buttonsByText(actionsCell(results, 'a.txt'), 'Copy')[0].click();
       await flush();
@@ -385,7 +389,7 @@ describe('renderBrowse', () => {
       it('Delete: surfaces a rejecting api.delete in the .status footer', async () => {
         const { actions, status } = await actionsForFile();
         failMutation('DELETE', '/delete', 500, 'boom');
-        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        mockConfirmDialog(true);
 
         buttonsByText(actions, 'Delete')[0].click();
         await flush();
@@ -396,7 +400,7 @@ describe('renderBrowse', () => {
       it('Move: surfaces a rejecting api.move in .status (e.g. 400 invalid destination)', async () => {
         const { actions, status } = await actionsForFile();
         failMutation('POST', '/move', 400, 'invalid destination');
-        vi.spyOn(window, 'prompt').mockReturnValue('/docs/missing/a.txt');
+        mockPromptDialog('/docs/missing/a.txt');
 
         buttonsByText(actions, 'Move')[0].click();
         await flush();
@@ -407,7 +411,7 @@ describe('renderBrowse', () => {
       it('Copy: surfaces a rejecting api.copy in .status', async () => {
         const { actions, status } = await actionsForFile();
         failMutation('POST', '/copy', 409, 'already exists');
-        vi.spyOn(window, 'prompt').mockReturnValue('/docs/a.txt');
+        mockPromptDialog('/docs/a.txt');
 
         buttonsByText(actions, 'Copy')[0].click();
         await flush();
@@ -426,7 +430,7 @@ describe('renderBrowse', () => {
           }
           return mockResponse({ status: 200, body: {} });
         });
-        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        mockConfirmDialog(true);
 
         buttonsByText(actions, 'Delete')[0].click();
         await flush();
@@ -437,7 +441,7 @@ describe('renderBrowse', () => {
       it('surfaces the error in .status only — the results table is left intact', async () => {
         const { actions, status, results } = await actionsForFile();
         failMutation('DELETE', '/delete', 500, 'boom');
-        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        mockConfirmDialog(true);
 
         buttonsByText(actions, 'Delete')[0].click();
         await flush();
@@ -455,7 +459,7 @@ describe('renderBrowse', () => {
       it('Delete success: shows no error and still re-renders (success path unchanged)', async () => {
         const { actions, status } = await actionsForFile();
         // Default mock: DELETE returns 200 → handler resolves normally.
-        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        mockConfirmDialog(true);
         const before = browseCallCount();
 
         buttonsByText(actions, 'Delete')[0].click();
@@ -470,7 +474,7 @@ describe('renderBrowse', () => {
 
       it('Move success: shows no error (success path unchanged)', async () => {
         const { actions, status } = await actionsForFile();
-        vi.spyOn(window, 'prompt').mockReturnValue('/docs/archive/a.txt');
+        mockPromptDialog('/docs/archive/a.txt');
 
         buttonsByText(actions, 'Move')[0].click();
         await flush();
@@ -482,7 +486,7 @@ describe('renderBrowse', () => {
 
       it('Copy success: shows no error (success path unchanged)', async () => {
         const { actions, status } = await actionsForFile();
-        vi.spyOn(window, 'prompt').mockReturnValue('/docs/archive/a.txt');
+        mockPromptDialog('/docs/archive/a.txt');
 
         buttonsByText(actions, 'Copy')[0].click();
         await flush();
@@ -496,13 +500,13 @@ describe('renderBrowse', () => {
         const { actions, status } = await actionsForFile();
 
         // Delete cancelled — handler returns early before any await, no throw.
-        vi.spyOn(window, 'confirm').mockReturnValue(false);
+        mockConfirmDialog(false);
         buttonsByText(actions, 'Delete')[0].click();
         await flush();
         expect(status.textContent).not.toContain('Error');
 
         // Move cancelled — prompt returns null, handler returns early.
-        vi.spyOn(window, 'prompt').mockReturnValue(null);
+        mockPromptDialog(null);
         buttonsByText(actions, 'Move')[0].click();
         await flush();
         expect(status.textContent).not.toContain('Error');
@@ -819,7 +823,7 @@ describe('renderBrowse', () => {
         renderBrowse(browseResult({ path: 'docs', entries: [file] }));
         // Cancel the confirm so no delete / re-render happens — isolates the
         // close behavior to the click-bubbles-to-document path.
-        vi.spyOn(window, 'confirm').mockReturnValue(false);
+        mockConfirmDialog(false);
 
         const actions = actionsOf(results, 'a.txt');
         menuBtnOf(actions).click();
@@ -1125,13 +1129,15 @@ describe('renderBrowse', () => {
     it('New directory prompts for a name then POSTs mkdir for joinPath(currentDir, name) and re-renders', async () => {
       const { results } = await setupCleared();
       renderBrowse(browseResult({ path: 'docs', entries: [] }));
-      vi.spyOn(window, 'prompt').mockReturnValue('new folder');
+      const promptSpy = mockPromptDialog('new folder');
 
       buttonsByText(dirMenuOf(results), 'New directory')[0].click();
       await flush();
       await flush();
 
-      expect(window.prompt).toHaveBeenCalledWith('New directory name:', '');
+      expect(promptSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'New directory', defaultValue: '' }),
+      );
       const mkdirCalls = fetchMock.mock.calls.filter(
         ([u, init]) => String(u).includes('/mkdir') && (init?.method ?? 'GET') === 'POST',
       );
@@ -1146,12 +1152,12 @@ describe('renderBrowse', () => {
       const { results } = await setupCleared();
       renderBrowse(browseResult({ path: 'docs', entries: [] }));
 
-      vi.spyOn(window, 'prompt').mockReturnValue(null);
+      mockPromptDialog(null);
       buttonsByText(dirMenuOf(results), 'New directory')[0].click();
       await flush();
       expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/mkdir'))).toBe(false);
 
-      vi.spyOn(window, 'prompt').mockReturnValue('   ');
+      mockPromptDialog('   ');
       buttonsByText(dirMenuOf(results), 'New directory')[0].click();
       await flush();
       expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/mkdir'))).toBe(false);
