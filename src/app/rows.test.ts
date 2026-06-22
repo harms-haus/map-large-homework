@@ -7,8 +7,10 @@
  *                       navigation, no context menu.
  *   - `makeBrowseRow` : file vs folder row structure, classes, actions-cell
  *                       exception, right-click opens the row menu, injection-safe.
- *   - `makeSearchRow` : file (download <a>) vs directory (nav <a>) name cell,
- *                       path/size/modified columns, injection-safe.
+ *   - `makeSearchRow` : mirrors a browse row (actions menu + right-click
+ *                       context menu, whole-row folder navigation, plain-text
+ *                       file names, path column shows the parent dir),
+ *                       injection-safe.
  *
  * Handler-level behavior (Delete/Move/Copy/Download confirmations, error
  * surfacing, re-rendering) is exhaustively covered by `render-browse.test.ts`
@@ -22,7 +24,6 @@ import { makeParentRow, makeBrowseRow, makeSearchRow } from './rows';
 import { createMenuState } from './menus';
 import { toBrowseHash } from '../router';
 import { formatBytes } from '../format';
-import { getApi } from './context';
 import { fileEntry, ISO_FMT, installAppTestLifecycle } from './test-helpers';
 
 installAppTestLifecycle();
@@ -179,55 +180,183 @@ describe('makeBrowseRow', () => {
 
 /* ===========================================================================
  * makeSearchRow — one search-result data row (→ rows.ts)
+ *
+ * Search rows mirror browse rows: the same per-row ⋮ actions menu + right-click
+ * context menu, whole-row folder navigation, and an Actions column. File names
+ * are plain text (no download link — download lives in the actions menu). The
+ * Path column shows only the containing directory (the entry's parent) as a
+ * browse link, NOT the full entry path.
+ *
+ * Column order: Name | Path | Size | Modified | Actions (five cells).
  * ========================================================================= */
 describe('makeSearchRow', () => {
-  it('a FILE result: 4 cells (Name | Path | Size | Modified); name is an <a> whose href is the raw downloadUrl', () => {
+  it('a FILE result: 5 cells; name is plain text (no link), and the actions cell holds one .row-menu-btn + one .row-menu', () => {
     const entry = fileEntry({ name: 'a.txt', path: 'docs/a.txt', isDirectory: false, size: 1536 });
-    const row = makeSearchRow(entry);
+    const row = makeSearchRow(entry, createMenuState());
     expect(row.tagName).toBe('TR');
+    expect(row.className).toBe(''); // file rows carry no folder-row class
     const cells = Array.from(row.querySelectorAll('td'));
-    expect(cells).toHaveLength(4);
+    expect(cells).toHaveLength(5);
 
-    const link = cells[0].querySelector('a')!;
-    expect(link.textContent).toBe('a.txt');
-    // href set verbatim via setAttribute (must equal the raw download URL).
-    expect(link.getAttribute('href')).toBe(getApi().downloadUrl('docs/a.txt'));
-    expect(link.getAttribute('download')).toBeNull(); // search name link is not a download anchor
+    // Name: plain text, no anchor (download lives in the actions menu).
+    expect(cells[0].children).toHaveLength(0);
+    expect(cells[0].textContent).toBe('a.txt');
 
-    expect(cells[1].textContent).toBe('docs/a.txt'); // Path
+    // Path: the containing directory ('docs') as a browse link.
+    const pathLink = cells[1].querySelector('a')!;
+    expect(pathLink.textContent).toBe('docs');
+    expect(pathLink.getAttribute('href')).toBe(toBrowseHash('docs'));
+
     expect(cells[2].textContent).toBe(formatBytes(1536)); // Size
     expect(cells[3].textContent).toBe(ISO_FMT); // Modified
+
+    const actions = cells[4];
+    expect(actions.querySelectorAll('.row-menu-btn')).toHaveLength(1);
+    expect(actions.querySelectorAll('.row-menu')).toHaveLength(1);
   });
 
-  it('a DIRECTORY result: name is a navigation <a> pointing at toBrowseHash(entry.path)', () => {
+  it('a DIRECTORY result: name is a nav <a> to toBrowseHash(entry.path), carries folder-row, and the path cell links to the parent dir', () => {
     const entry = fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true, itemCount: 3 });
-    const row = makeSearchRow(entry);
+    const row = makeSearchRow(entry, createMenuState());
+    expect(row.classList.contains('folder-row')).toBe(true);
     const cells = Array.from(row.querySelectorAll('td'));
-    const link = cells[0].querySelector('a')!;
-    expect(link.textContent).toBe('sub');
-    expect(link.getAttribute('href')).toBe(toBrowseHash('docs/sub'));
+
+    const nameLink = cells[0].querySelector('a')!;
+    expect(nameLink.textContent).toBe('sub');
+    expect(nameLink.getAttribute('href')).toBe(toBrowseHash('docs/sub'));
+
+    // Path column shows the parent dir ('docs'), not the full entry path.
+    const pathLink = cells[1].querySelector('a')!;
+    expect(pathLink.textContent).toBe('docs');
+    expect(pathLink.getAttribute('href')).toBe(toBrowseHash('docs'));
+
     expect(cells[2].textContent).toBe('3'); // child count
   });
 
   it('a directory with itemCount 0 renders a blank Size cell (not "0")', () => {
     const row = makeSearchRow(
       fileEntry({ name: 'empty', path: 'docs/empty', isDirectory: true, itemCount: 0 }),
+      createMenuState(),
     );
     const cells = Array.from(row.querySelectorAll('td'));
     expect(cells[2].textContent).toBe('');
   });
 
+  it('the Path cell shows only the parent directory, not the full path, for a deeply nested entry', () => {
+    const entry = fileEntry({ name: 'c.txt', path: 'a/b/c.txt', isDirectory: false });
+    const row = makeSearchRow(entry, createMenuState());
+    const cells = Array.from(row.querySelectorAll('td'));
+    // Parent of 'a/b/c.txt' is 'a/b' — the full path is never shown.
+    const pathLink = cells[1].querySelector('a')!;
+    expect(pathLink.textContent).toBe('a/b');
+    expect(pathLink.getAttribute('href')).toBe(toBrowseHash('a/b'));
+    expect(cells[1].textContent).not.toContain('c.txt');
+  });
+
+  it('a root-level entry (no parent) renders an empty Path cell with no link', () => {
+    const entry = fileEntry({ name: 'root.txt', path: 'root.txt', isDirectory: false });
+    const row = makeSearchRow(entry, createMenuState());
+    const cells = Array.from(row.querySelectorAll('td'));
+    expect(cells[1].textContent).toBe('');
+    expect(cells[1].querySelector('a')).toBeNull();
+  });
+
+  it('a folder row navigates on a click in the Size cell, but NOT on a click in the path or actions cell', () => {
+    const row = makeSearchRow(
+      fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true, itemCount: 0 }),
+      createMenuState(),
+    );
+    const cells = Array.from(row.querySelectorAll('td'));
+    const pathCell = cells[1];
+    const sizeCell = cells[2];
+    const actionsCell = cells[4];
+
+    // Size cell click → whole-row navigation into the folder.
+    sizeCell.dispatchEvent(new MouseEvent('click', { cancelable: true, bubbles: true }));
+    expect(window.location.hash).toBe(toBrowseHash('docs/sub'));
+
+    // Path cell click → excluded (it has its own link to the parent dir).
+    window.location.hash = '';
+    pathCell.dispatchEvent(new MouseEvent('click', { cancelable: true, bubbles: true }));
+    expect(window.location.hash).toBe('');
+
+    // Actions cell click → excluded from whole-row navigation.
+    window.location.hash = '';
+    actionsCell.dispatchEvent(new MouseEvent('click', { cancelable: true, bubbles: true }));
+    expect(window.location.hash).toBe('');
+  });
+
+  it('clicking the ⋮ button opens the row menu (hidden=false) and does not navigate', () => {
+    const row = makeSearchRow(
+      fileEntry({ name: 'a.txt', path: 'docs/a.txt', isDirectory: false, size: 0 }),
+      createMenuState(),
+    );
+    const btn = row.querySelector('.row-menu-btn') as HTMLButtonElement;
+    const menu = row.querySelector('.row-menu') as HTMLElement;
+    expect(menu.hidden).toBe(true);
+
+    btn.click();
+
+    expect(menu.hidden).toBe(false);
+    expect(btn.getAttribute('aria-expanded')).toBe('true');
+    expect(window.location.hash).toBe('');
+  });
+
+  it('right-clicking a search row prevents default and opens the row menu at the cursor', () => {
+    const row = makeSearchRow(
+      fileEntry({ name: 'a.txt', path: 'docs/a.txt', isDirectory: false, size: 0 }),
+      createMenuState(),
+    );
+    const menu = row.querySelector('.row-menu') as HTMLElement;
+
+    const evt = new MouseEvent('contextmenu', {
+      cancelable: true,
+      bubbles: true,
+      clientX: 30,
+      clientY: 40,
+    });
+    row.dispatchEvent(evt);
+
+    expect(evt.defaultPrevented).toBe(true);
+    expect(menu.hidden).toBe(false);
+    expect(menu.style.left).toBe('30px');
+    expect(menu.style.top).toBe('40px');
+  });
+
+  it('file menu: Download(a) + Delete/Move/Copy; folder menu: Upload + Delete/Move/Copy (no Download)', () => {
+    const file = fileEntry({ name: 'a.txt', path: 'docs/a.txt', isDirectory: false });
+    const dir = fileEntry({ name: 'sub', path: 'docs/sub', isDirectory: true });
+    const fileRow = makeSearchRow(file, createMenuState());
+    const dirRow = makeSearchRow(dir, createMenuState());
+
+    const fileMenu = Array.from(fileRow.querySelectorAll('.row-menu > *'));
+    expect(fileMenu).toHaveLength(4);
+    expect(fileMenu[0].tagName).toBe('A');
+    expect((fileMenu[0].textContent ?? '').trim()).toBe('Download');
+
+    const dirMenu = Array.from(dirRow.querySelectorAll('.row-menu > *'));
+    expect(dirMenu).toHaveLength(4);
+    expect((dirMenu[0].textContent ?? '').trim()).toBe('Upload');
+    expect(dirRow.querySelector('.row-menu a')).toBeNull(); // folders have no Download
+  });
+
   it('inserts the name and path via textContent (no HTML injection)', () => {
+    // Markup chosen without `/` inside any tag so it does not corrupt path
+    // segmentation: the name carries `<b>` markup (name cell is never split),
+    // and the parent-dir segment is a `<img>` void element (no closing slash).
+    // The row must insert both as text, not parse either as HTML.
     const evil = fileEntry({
       name: '<b>name</b>',
-      path: '<script>x</script>',
+      path: 'evil<img>/file.txt',
       isDirectory: false,
     });
-    const row = makeSearchRow(evil);
+    const row = makeSearchRow(evil, createMenuState());
     const cells = Array.from(row.querySelectorAll('td'));
     expect(cells[0].querySelector('b')).toBeNull();
     expect(cells[0].textContent).toBe('<b>name</b>');
-    expect(cells[1].querySelector('script')).toBeNull();
-    expect(cells[1].textContent).toBe('<script>x</script>');
+    // The path link's text is the parent dir ('evil<img>'), inserted via
+    // textContent so no real <img> element is created.
+    expect(cells[1].querySelector('img')).toBeNull();
+    expect(cells[1].textContent).toBe('evil<img>');
   });
 });

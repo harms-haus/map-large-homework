@@ -302,9 +302,19 @@ body {
   text-align: right;
 }
 
+.search-table th:nth-child(3),
+.search-table td:nth-child(3),
+.search-table th:nth-child(4),
+.search-table td:nth-child(4),
+.search-table th:nth-child(5),
+.search-table td:nth-child(5) {
+  text-align: right;
+}
+
 /* Click-to-browse rows */
 .browse-table tbody tr.folder-row,
-.browse-table tbody tr.parent-row {
+.browse-table tbody tr.parent-row,
+.search-table tbody tr.folder-row {
   cursor: pointer;
 }
 
@@ -323,6 +333,7 @@ body {
 }
 /* prettier-ignore */
 .browse-table tbody tr:hover .row-menu-btn,
+.search-table tbody tr:hover .row-menu-btn,
 .row-menu-btn[aria-expanded="true"] {
   opacity: 1;
   pointer-events: auto;

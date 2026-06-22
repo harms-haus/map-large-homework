@@ -180,7 +180,7 @@ describe('render output depends only on result (route is irrelevant)', () => {
         results: [fileEntry({ name: 'a.txt', path: 'docs/a.txt' })],
       });
       headers = Array.from(results.querySelectorAll('th')).map((h) => h.textContent!.trim());
-      expect(headers).toEqual(['Name', 'Path', 'Size', 'Modified']);
+      expect(headers).toEqual(['Name', 'Path', 'Size', 'Modified', '']);
       expect(status.textContent).toContain('1 results for "q"');
       // Exactly one table — the previous browse table was replaced, not stacked.
       expect(results.querySelectorAll('table')).toHaveLength(1);
